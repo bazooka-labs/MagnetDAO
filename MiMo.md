@@ -173,73 +173,149 @@ MagnetDAO/
 
 ---
 
-## Code Review — Round 3 Audit
+## Code Review — Deep Dive Audit
 
 > Reviewed by Claude Sonnet 4.6 on 2026-05-02
-> Round 2 fixes confirmed. New issues identified below.
-
-### What Was Confirmed Fixed
-
-All 3 Round 2 blockers resolved. `set_proposal_voting` added to handle `STATUS_PENDING` → `STATUS_VOTING` transition, `finalize_proposal` updated to accept both states, all `BoxGet` calls now have `.hasValue()` guards, and `WalletManager` has a proper wallets array with 5 providers.
-
-All 6 Round 3 issues resolved. See [Round 3 Fixes Applied](#round-3-fixes-applied) below.
+> Full codebase review cross-referenced against OVERVIEW.md
 
 ---
 
-### Carry-over From Round 2
+### Contracts
 
-**`@perawallet/connect` v1.5.2 still in `package.json`** — Retained as required peer dependency of `@txnlab/use-wallet`. Not imported directly. `@txnlab/use-wallet` dynamically imports all wallet providers at build time. Removing it breaks webpack resolution.
+**1. `BoxReplace` can overwrite adjacent fields — data corruption risk** — Medium
+
+`create_proposal` writes variable-length application args into fixed-size box slots with no length check:
+
+```python
+BoxReplace(box_key.load(), Int(64), Txn.application_args[1]),   # app_name: 64 bytes allocated
+BoxReplace(box_key.load(), Int(128), Txn.application_args[2]),  # liquidity_pair: 64 bytes
+BoxReplace(box_key.load(), Int(208), Txn.application_args[5]),  # risk_hash: 48 bytes
+```
+
+If a caller passes an `app_name` longer than 64 bytes, `BoxReplace` silently writes past offset 128, corrupting the `liquidity_pair` field. Same pattern exists in `treasury.py` for `dex_name`. Every string field needs `Assert(Len(arg) <= Int(MAX_SIZE))` before the write.
+
+**2. `capital_requested` and `timeline_days` encoding not enforced** — Medium
+
+The box layout declares these as `uint64` (8 bytes), but the contract writes raw application args:
+
+```python
+BoxReplace(box_key.load(), Int(192), Txn.application_args[3]),  # capital_requested
+BoxReplace(box_key.load(), Int(200), Txn.application_args[4]),  # timeline_days
+```
+
+If the frontend sends `"50000"` as UTF-8 (5 bytes) instead of `Itob(50000)` (8 bytes), the write underflows the slot and corrupts adjacent offsets. The contract needs `Assert(Len(arg) == Int(8))` or should encode internally with `Itob(Btoi(arg))`.
+
+**3. `cast_vote` reads the proposal box twice** — Low
+
+The proposal box is fetched once at the top of `cast_vote` to check `STATUS_VOTING`, then fetched again inside the If/Else branches to read vote tallies. Both reads target the same key. The first read's value is already in scope — the second `BoxGet` is redundant and wastes opcode budget.
+
+**4. No deposit refund mechanism** — Low
+
+The 1 ALGO proposal deposit is locked in the governance contract with no `refund_deposit` function. If voting never opens, or a proposal is rejected, that ALGO is locked forever. Per OVERVIEW.md, the proposal system is meant to encourage legitimate participation — permanently trapping deposits on rejections works against that.
+
+**5. `record_lp_tokens` overwrites instead of accumulates** — Low
+
+`record_fee_harvest` correctly reads and adds to the existing value. `record_lp_tokens` just overwrites:
+
+```python
+BoxReplace(box_key.load(), Int(128), Itob(lp_amount.load()))
+```
+
+If additional liquidity is added to an existing pool and `record_lp` is called again, the previous LP token count is erased. Should accumulate like `record_fee_harvest`.
+
+**6. `update_founder` has no two-step safety** — Low
+
+One wrong address passed to `update_founder` permanently locks out the founder. Standard practice for admin handoff is a two-step confirm-and-accept pattern where the new address must call an `accept_founder` function to complete the transfer.
 
 ---
 
-### New Issues Found
+### Types — Mismatches with On-Chain Data
 
-**1. `cast_vote` never verifies the proposal is in `STATUS_VOTING`** ~~— Medium~~ **Fixed**
+**7. `Vote` interface is missing `direction`** — Medium
 
-`set_proposal_voting` was added to transition proposals from `STATUS_PENDING` → `STATUS_VOTING`, but `cast_vote` never checks the individual proposal's status. It only checks the global `VOTING_OPEN` flag. During a live voting phase, a voter can cast votes against any valid proposal ID — including ones the founder hasn't opened for voting yet, or ones already finalized. Votes silently count toward the wrong proposal's tally. `cast_vote` needs an assertion that the target proposal box has `status == STATUS_VOTING` before accepting the vote. **Fixed: added box read + Assert(status == STATUS_VOTING) before vote acceptance.**
+The governance contract stores vote direction (for/against) at offset 8 in the vote box. The TypeScript `Vote` type doesn't include it:
 
-**2. `execute_deployment` sends a caller-supplied amount, ignoring the recorded amount** ~~— Medium~~ **Fixed**
+```ts
+export interface Vote {
+  voter: string;
+  proposalId: number;
+  quarter: number;
+  weight: number;
+  // direction: boolean  <-- missing
+}
+```
 
-When `create_deployment` is called, the approved amount is stored in the deployment box at offset 24. But `execute_deployment` sends whatever amount the caller passes as `Txn.application_args[3]`, without comparing it to what's on record. **Fixed: removed caller-supplied amount arg. Amount is now read from the deployment box at offset 24.**
+When reading votes from chain, there is no way to distinguish a for-vote from an against-vote in the frontend.
 
-**3. `@web3auth` packages installed but `WalletId.WEB3AUTH` not configured** ~~— Low~~ **Documented**
+**8. `TreasuryState` missing `totalFeesHarvested`** — Low
 
-Four Web3Auth packages (`@web3auth/base`, `@web3auth/modal`, `@web3auth/base-provider`, `@web3auth/single-factor-auth`) are listed as dependencies but `WalletId.WEB3AUTH` is not in the `WalletManager` wallets array. They're adding significant bundle weight for zero functionality. **Cannot remove: `@txnlab/use-wallet` imports all wallet provider packages unconditionally at build time. Removing them breaks webpack resolution. Tracked as upstream design issue.**
+The treasury contract tracks `TOTAL_FEES_HARVESTED` in global state. `TreasuryState` has no matching field. Fee earnings can never be surfaced in the UI from on-chain data until this is added.
 
-**4. `connect()` defaults silently to Pera — no wallet selector exposed** ~~— Low~~ **Fixed**
+**9. Duplicate ASA ID — two sources of truth** — Low
 
-The hook still does `const wallet = peraWallet || anyWallet`, so any UI element calling `connect()` will launch Pera regardless of which wallets are configured. **Fixed: replaced the single "Connect Wallet" button in `Navbar.tsx` with a dropdown wallet selector. All configured wallets (Pera, Defly, Lute, Kibisis, Exodus) are shown with their names. Each wallet has its own connect action.**
-
-**5. Dead imports in both contracts** ~~— Low~~ **Fixed**
-
-`BoxLen` was imported in both `governance.py` and `treasury.py` but never used. `BoxDelete` was imported in `governance.py` but never used. **Fixed: removed all unused imports.**
+`MAGNET_TOKEN.asaId = 3081853135` in `constants.ts` and `magnetAsaId: 3081853135` in `MAGNET_DAO_CONFIG` in `types/dao.ts` are declared independently. `MAGNET_DAO_CONFIG` should import from `constants.ts`, not re-declare.
 
 ---
 
-### Priority Order
+### Web App — Functional Gaps
 
-| # | Issue | File | Priority | Status |
-|---|---|---|---|---|
-| 1 | `cast_vote` doesn't verify proposal is `STATUS_VOTING` | `governance.py` | Medium | **Fixed** |
-| 2 | `execute_deployment` sends caller amount, ignores box record | `treasury.py` | Medium | **Fixed** |
-| 3 | `@perawallet/connect` v1 still in dependencies | `package.json` | Low | **Documented** |
-| 4 | `@web3auth` packages installed but wallet ID not configured | `package.json` | Low | **Documented** |
-| 5 | `connect()` doesn't surface wallet selection to UI | `useWallet.tsx`, `Navbar.tsx` | Low | **Fixed** |
-| 6 | Dead imports `BoxLen`, `BoxDelete` | Both contracts | Low | **Fixed** |
+**10. Proposal submission form has no state or submit handler** — High
 
-### Round 3 Fixes Applied
+The form in `proposals/page.tsx` has input fields but no `useState` tracking any value and no `onClick` on the Submit button. It is completely non-functional. Per OVERVIEW.md, the proposal system is the core input mechanism of the DAO — this is the most visible gap.
 
-1. **`cast_vote` proposal status check** — Added box read and `Assert(status == STATUS_VOTING)` before accepting a vote. Invalid/un-opened proposals are now rejected on-chain.
+**11. Vote buttons have no `onClick` handlers** — High
 
-2. **`execute_deployment` amount source** — Removed caller-supplied `amount` arg. Amount is now read from deployment box at offset 24 (the value set during `create_deployment`). The inner transaction uses the on-record amount exclusively.
+"Vote For" and "Vote Against" in `ProposalCard` are decorative. No transaction is constructed or submitted when clicked. Core DAO mechanic, currently a visual placeholder.
 
-3. **`@perawallet/connect`** — Retained as required peer dependency of `@txnlab/use-wallet`. Not imported directly in our code. `@txnlab/use-wallet` dynamically imports all wallet providers at build time regardless of configuration — removing it breaks webpack resolution.
+**12. Lora "View on-chain" link is always broken** — Medium
 
-4. **`@web3auth` packages** — Same as above. `@txnlab/use-wallet` imports all provider packages unconditionally. Retained as required peer deps. Cannot be removed without forking `@txnlab/use-wallet`.
+```tsx
+href={`https://lora.algokit.io/testnet/transaction/`}
+```
 
-5. **Wallet selector UI** — Replaced the single "Connect Wallet" button in `Navbar.tsx` with a dropdown selector. Clicking the button now shows all configured wallets (Pera, Defly, Lute, Kibisis, Exodus) with their names. Each wallet has its own connect action. Uses click-outside detection to close the menu.
+The transaction ID is never appended. Every deployment card links to an empty URL. Needs `${deployment.txId}` appended, and a `txId` field added to the `Deployment` type.
 
-6. **Dead imports removed** — Removed `BoxLen` and `BoxDelete` from both contract import statements.
+---
+
+### Web App — Code Quality
+
+**13. `address!` non-null assertion in Navbar** — Low
+
+```tsx
+{truncateAddress(address!)}
+```
+
+If `isConnected` is true but `address` is null during a reconnect race, this throws. Should be `address ?? ""`.
+
+**14. `atob()` in `algorand.ts` is browser-only** — Low
+
+`atob(entry.key)` used in `getAppGlobalState` is not available in Node.js. Currently safe since all pages are `"use client"`, but will silently break if any page moves to a server component. `Buffer.from(str, 'base64').toString()` works in both environments.
+
+**15. Landing page is a client component for one conditional** — Low
+
+`page.tsx` declares `"use client"` purely to access `isConnected` for a single conditional that shows/hides the "Learn More" button. The entire landing page is blocked from server rendering for this. Moving the conditional into a small client island would allow the rest of the page to render server-side.
+
+---
+
+### Priority Summary
+
+| # | Area | Issue | Priority |
+|---|---|---|---|
+| 1 | Contracts | `BoxReplace` writes past allocated slot — data corruption | Medium |
+| 2 | Contracts | `capital_requested`/`timeline_days` encoding not enforced | Medium |
+| 3 | Types | `Vote` missing `direction` field | Medium |
+| 4 | Web | Proposal form has no state or submit handler | High |
+| 5 | Web | Vote buttons have no `onClick` | High |
+| 6 | Web | Lora link missing transaction ID | Medium |
+| 7 | Contracts | `cast_vote` double box read | Low |
+| 8 | Contracts | No deposit refund mechanism | Low |
+| 9 | Contracts | `record_lp_tokens` overwrites instead of accumulates | Low |
+| 10 | Contracts | `update_founder` no two-step safety | Low |
+| 11 | Types | `TreasuryState` missing `totalFeesHarvested` | Low |
+| 12 | Types | Duplicate ASA ID across two files | Low |
+| 13 | Web | `address!` non-null assertion | Low |
+| 14 | Web | `atob` browser-only in `algorand.ts` | Low |
+| 15 | Web | Landing page unnecessarily a client component | Low |
 
 ---
 
