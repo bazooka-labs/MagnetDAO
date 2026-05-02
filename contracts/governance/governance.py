@@ -130,6 +130,30 @@ def approval_program():
         Approve(),
     ])
 
+    # --- set_proposal_voting ---
+    # args: [1] proposal_id (bytes uint64)
+    # Explicitly transitions a single proposal from PENDING to VOTING
+    set_proposal_voting = Seq([
+        only_founder(),
+        (proposal_key := ScratchVar()).store(
+            Concat(
+                PROPOSAL_PREFIX,
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
+            )
+        ),
+        (proposal_box := BoxGet(proposal_key.load())),
+        Assert(proposal_box.hasValue()),
+        (current_status := ScratchVar()).store(
+            Btoi(Extract(proposal_box.value(), Int(0), Int(8)))
+        ),
+        Assert(current_status.load() == STATUS_PENDING),
+        BoxReplace(proposal_key.load(), Int(0), Itob(STATUS_VOTING)),
+        Approve(),
+    ])
+
     # --- cast_vote ---
     # args: [1] proposal_id (bytes uint64), [2] vote_direction (bytes: 1=for, 0=against)
     # Uses asset_holding_get to snapshot voter's Magnet ASA balance as vote weight
@@ -183,22 +207,24 @@ def approval_program():
 
         # Read and update the correct counter
         If(Btoi(Txn.application_args[2]) == Int(1))
-        .Then(
+        .Then(Seq([
             # Vote FOR
             (proposal_box := BoxGet(proposal_key.load())),
+            Assert(proposal_box.hasValue()),
             (cur_for := ScratchVar()).store(
                 Btoi(Extract(proposal_box.value(), Int(16), Int(8)))
             ),
             BoxReplace(proposal_key.load(), Int(16), Itob(cur_for.load() + magnet_balance.value()))
-        )
-        .Else(
+        ]))
+        .Else(Seq([
             # Vote AGAINST
             (proposal_box := BoxGet(proposal_key.load())),
+            Assert(proposal_box.hasValue()),
             (cur_against := ScratchVar()).store(
                 Btoi(Extract(proposal_box.value(), Int(24), Int(8)))
             ),
             BoxReplace(proposal_key.load(), Int(24), Itob(cur_against.load() + magnet_balance.value()))
-        ),
+        ])),
 
         App.globalPut(TOTAL_VOTES_CAST, App.globalGet(TOTAL_VOTES_CAST) + Int(1)),
 
@@ -233,10 +259,15 @@ def approval_program():
 
         # Read current status
         (proposal_box := BoxGet(proposal_key.load())),
+        Assert(proposal_box.hasValue()),
         (current_status := ScratchVar()).store(
             Btoi(Extract(proposal_box.value(), Int(0), Int(8)))
         ),
-        Assert(current_status.load() == STATUS_VOTING),
+        # Accept PENDING or VOTING as valid pre-finalize states
+        Assert(Or(
+            current_status.load() == STATUS_PENDING,
+            current_status.load() == STATUS_VOTING
+        )),
 
         # Read tallies
         (votes_for := ScratchVar()).store(
@@ -288,6 +319,7 @@ def approval_program():
             )
         ),
         (proposal_box := BoxGet(proposal_key.load())),
+        Assert(proposal_box.hasValue()),
         (current_status := ScratchVar()).store(
             Btoi(Extract(proposal_box.value(), Int(0), Int(8)))
         ),
@@ -322,6 +354,7 @@ def approval_program():
          Cond(
              [Txn.application_args[0] == Bytes("create_proposal"), create_proposal],
              [Txn.application_args[0] == Bytes("open_voting"), open_voting],
+             [Txn.application_args[0] == Bytes("set_voting"), set_proposal_voting],
              [Txn.application_args[0] == Bytes("cast_vote"), cast_vote],
              [Txn.application_args[0] == Bytes("close_voting"), close_voting],
              [Txn.application_args[0] == Bytes("finalize"), finalize_proposal],

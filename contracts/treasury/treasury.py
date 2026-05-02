@@ -126,6 +126,7 @@ def approval_program():
 
         # Must be PENDING
         (deploy_box := BoxGet(box_key.load())),
+        Assert(deploy_box.hasValue()),
         (deploy_status := ScratchVar()).store(
             Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
         ),
@@ -160,6 +161,7 @@ def approval_program():
             Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
         ),
         (deploy_box := BoxGet(box_key.load())),
+        Assert(deploy_box.hasValue()),
         (deploy_status := ScratchVar()).store(
             Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
         ),
@@ -185,6 +187,7 @@ def approval_program():
 
         # Read current fees for this deployment
         (deploy_box := BoxGet(box_key.load())),
+        Assert(deploy_box.hasValue()),
         (current_fees := ScratchVar()).store(
             Btoi(Extract(deploy_box.value(), Int(136), Int(8)))
         ),
@@ -230,6 +233,7 @@ def approval_program():
             Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
         ),
         (deploy_box := BoxGet(box_key.load())),
+        Assert(deploy_box.hasValue()),
         (deploy_status := ScratchVar()).store(
             Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
         ),

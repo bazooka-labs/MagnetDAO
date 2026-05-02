@@ -24,6 +24,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             },
           },
         },
+        wallets: [
+          WalletId.PERA,
+          WalletId.DEFLY,
+          WalletId.LUTE,
+          WalletId.KIBISIS,
+          WalletId.EXODUS,
+        ],
       }),
     []
   );

@@ -182,11 +182,13 @@ MagnetDAO/
 
 All 10 issues from the initial audit were resolved. Contracts compile, vote weight uses real Magnet ASA balance, double-vote prevention is in place, on-chain tallying works, `deploy.py` respects `--deploy`, fee model uses LP position tracking, Next.js upgraded, and wallet migrated to `@txnlab/use-wallet-react` v4.6.0.
 
+All 4 issues from the round 2 audit were also resolved. See [Round 2 Fixes Applied](#round-2-fixes-applied) below.
+
 ---
 
 ### New Issues Found
 
-**1. `STATUS_VOTING` is never set — `finalize_proposal` will always reject** ⛔ Blocker
+**1. `STATUS_VOTING` is never set — `finalize_proposal` will always reject** ~~⛔ Blocker~~ **Fixed**
 
 `open_voting` sets the global `VOTING_OPEN = 1` flag but never updates individual proposal statuses. Proposals are created as `STATUS_PENDING` and nothing transitions them to `STATUS_VOTING`. However, `finalize_proposal` asserts:
 
@@ -196,7 +198,7 @@ Assert(current_status.load() == STATUS_VOTING)
 
 This will always fail. Every proposal that goes through a vote cycle is permanently un-finalizable. Either `open_voting` must iterate proposals and set them to `STATUS_VOTING`, or `finalize_proposal` must accept `STATUS_PENDING` as the valid pre-finalize state.
 
-**2. `BoxGet` called without `.hasValue()` assertion** ⛔ Blocker
+**2. `BoxGet` called without `.hasValue()` assertion** ~~⛔ Blocker~~ **Fixed**
 
 In both `cast_vote` and `finalize_proposal`, proposal boxes are read via `BoxGet` but existence is never verified before `.value()` is accessed:
 
@@ -209,7 +211,7 @@ In both `cast_vote` and `finalize_proposal`, proposal boxes are read via `BoxGet
 
 If an invalid proposal ID is passed, the contract reads from a nonexistent box. An `Assert(proposal_box.hasValue())` is required immediately after every `BoxGet` call.
 
-**3. `WalletManager` has no wallet adapters — `connect()` silently does nothing** ⛔ Blocker
+**3. `WalletManager` has no wallet adapters — `connect()` silently does nothing** ~~⛔ Blocker~~ **Fixed**
 
 `useWallet.tsx` creates `WalletManager` with network config but omits the `wallets` array entirely:
 
@@ -223,7 +225,7 @@ new WalletManager({
 
 Without specifying `wallets: [WalletId.PERA, WalletId.DEFLY, ...]`, the manager has no adapters. The `wallets` array returned by `useUseWallet()` will be empty and `connect()` will silently do nothing. No wallet can be connected.
 
-**4. `@perawallet/connect` v1.5.2 still in `package.json`** — Low
+**4. `@perawallet/connect` v1.5.2 still in `package.json`** ~~— Low~~ **Fixed**
 
 The deprecated v1 package remains alongside `@txnlab/use-wallet-react`. It should be removed — it keeps WalletConnect v1 in the dependency tree and adds unnecessary bundle weight.
 
@@ -231,12 +233,24 @@ The deprecated v1 package remains alongside `@txnlab/use-wallet-react`. It shoul
 
 ### Priority Order
 
-| # | Issue | File | Priority |
-|---|---|---|---|
-| 1 | `STATUS_VOTING` never set — finalize always fails | `governance.py` | Blocker |
-| 2 | `BoxGet` missing `.hasValue()` before every read | `governance.py` | Blocker |
-| 3 | `WalletManager` missing `wallets` array | `useWallet.tsx` | Blocker |
-| 4 | Remove `@perawallet/connect` v1 from deps | `package.json` | Low |
+| # | Issue | File | Priority | Status |
+|---|---|---|---|---|
+| 1 | `STATUS_VOTING` never set — finalize always fails | `governance.py` | Blocker | **Fixed** |
+| 2 | `BoxGet` missing `.hasValue()` before every read | `governance.py`, `treasury.py` | Blocker | **Fixed** |
+| 3 | `WalletManager` missing `wallets` array | `useWallet.tsx` | Blocker | **Fixed** |
+| 4 | Remove `@perawallet/connect` v1 from direct deps | `package.json` | Low | **Fixed** |
+
+### Round 2 Fixes Applied
+
+1. **`STATUS_VOTING` fix** — Added `set_proposal_voting` function to explicitly transition proposals from PENDING to VOTING. Also changed `finalize_proposal` to accept both `STATUS_PENDING` and `STATUS_VOTING` as valid pre-finalize states (flexible for either workflow path).
+
+2. **`BoxGet` `.hasValue()` guards** — Added `Assert(box.hasValue())` after every `BoxGet` call in both contracts:
+   - `governance.py`: `cast_vote` (x2 in If branches), `finalize_proposal`, `mark_deployed`, `set_proposal_voting`
+   - `treasury.py`: `execute_deployment`, `record_lp_tokens`, `record_fee_harvest`, `close_deployment`
+
+3. **`WalletManager` wallets** — Added `wallets: [WalletId.PERA, WalletId.DEFLY, WalletId.LUTE, WalletId.KIBISIS, WalletId.EXODUS]` to `WalletManager` config.
+
+4. **Dependency cleanup** — `@perawallet/connect` removed from direct `dependencies`. It remains as a required peer dependency of `@txnlab/use-wallet` (not imported directly).
 
 ---
 
