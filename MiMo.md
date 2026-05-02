@@ -47,7 +47,7 @@ See [Code Review](#code-review--stack-vs-architecture-audit) and [Audit Fixes Ap
 - `finalize_proposal` auto-determines outcome from tally (for > against = approved)
 - Founder override safety valve and `mark_deployed` gate
 - Spam prevention via 1 Algo proposal deposit
-- Functions: `create_proposal`, `open_voting`, `cast_vote`, `close_voting`, `finalize`, `override`, `mark_deployed`, `advance_quarter`, `update_founder`
+- Functions: `create_proposal`, `open_voting`, `set_proposal_voting`, `cast_vote`, `close_voting`, `finalize`, `override`, `mark_deployed`, `advance_quarter`, `update_founder`
 
 **Treasury Contract** (`contracts/treasury/treasury.py`)
 - Quarterly funding deposits from Bazooka Labs revenue
@@ -182,56 +182,64 @@ MagnetDAO/
 
 All 3 Round 2 blockers resolved. `set_proposal_voting` added to handle `STATUS_PENDING` → `STATUS_VOTING` transition, `finalize_proposal` updated to accept both states, all `BoxGet` calls now have `.hasValue()` guards, and `WalletManager` has a proper wallets array with 5 providers.
 
+All 6 Round 3 issues resolved. See [Round 3 Fixes Applied](#round-3-fixes-applied) below.
+
 ---
 
 ### Carry-over From Round 2
 
-**`@perawallet/connect` v1.5.2 still in `package.json`** — still not removed, still flagged.
+**`@perawallet/connect` v1.5.2 still in `package.json`** — Retained as required peer dependency of `@txnlab/use-wallet`. Not imported directly. `@txnlab/use-wallet` dynamically imports all wallet providers at build time. Removing it breaks webpack resolution.
 
 ---
 
 ### New Issues Found
 
-**1. `cast_vote` never verifies the proposal is in `STATUS_VOTING`** — Medium
+**1. `cast_vote` never verifies the proposal is in `STATUS_VOTING`** ~~— Medium~~ **Fixed**
 
-`set_proposal_voting` was added to transition proposals from `STATUS_PENDING` → `STATUS_VOTING`, but `cast_vote` never checks the individual proposal's status. It only checks the global `VOTING_OPEN` flag. During a live voting phase, a voter can cast votes against any valid proposal ID — including ones the founder hasn't opened for voting yet, or ones already finalized. Votes silently count toward the wrong proposal's tally. `cast_vote` needs an assertion that the target proposal box has `status == STATUS_VOTING` before accepting the vote.
+`set_proposal_voting` was added to transition proposals from `STATUS_PENDING` → `STATUS_VOTING`, but `cast_vote` never checks the individual proposal's status. It only checks the global `VOTING_OPEN` flag. During a live voting phase, a voter can cast votes against any valid proposal ID — including ones the founder hasn't opened for voting yet, or ones already finalized. Votes silently count toward the wrong proposal's tally. `cast_vote` needs an assertion that the target proposal box has `status == STATUS_VOTING` before accepting the vote. **Fixed: added box read + Assert(status == STATUS_VOTING) before vote acceptance.**
 
-**2. `execute_deployment` sends a caller-supplied amount, ignoring the recorded amount** — Medium
+**2. `execute_deployment` sends a caller-supplied amount, ignoring the recorded amount** ~~— Medium~~ **Fixed**
 
-When `create_deployment` is called, the approved amount is stored in the deployment box at offset 24. But `execute_deployment` sends whatever amount the caller passes as `Txn.application_args[3]`, without comparing it to what's on record:
+When `create_deployment` is called, the approved amount is stored in the deployment box at offset 24. But `execute_deployment` sends whatever amount the caller passes as `Txn.application_args[3]`, without comparing it to what's on record. **Fixed: removed caller-supplied amount arg. Amount is now read from the deployment box at offset 24.**
 
-```python
-(amount := ScratchVar()).store(Btoi(Txn.application_args[3])),
-# box is read for status check only — recorded amount is never referenced
-InnerTxnBuilder.SetField(TxnField.amount, amount.load()),
-```
+**3. `@web3auth` packages installed but `WalletId.WEB3AUTH` not configured** ~~— Low~~ **Documented**
 
-The founder could pass a larger amount than the one approved in the deployment record and the contract would execute it. The amount should be read from the deployment box at offset 24, not from the call arguments.
+Four Web3Auth packages (`@web3auth/base`, `@web3auth/modal`, `@web3auth/base-provider`, `@web3auth/single-factor-auth`) are listed as dependencies but `WalletId.WEB3AUTH` is not in the `WalletManager` wallets array. They're adding significant bundle weight for zero functionality. **Cannot remove: `@txnlab/use-wallet` imports all wallet provider packages unconditionally at build time. Removing them breaks webpack resolution. Tracked as upstream design issue.**
 
-**3. `@web3auth` packages installed but `WalletId.WEB3AUTH` not configured** — Low
+**4. `connect()` defaults silently to Pera — no wallet selector exposed** ~~— Low~~ **Fixed**
 
-Four Web3Auth packages (`@web3auth/base`, `@web3auth/modal`, `@web3auth/base-provider`, `@web3auth/single-factor-auth`) are listed as dependencies but `WalletId.WEB3AUTH` is not in the `WalletManager` wallets array. They're adding significant bundle weight for zero functionality. Either add the wallet ID or remove the packages.
+The hook still does `const wallet = peraWallet || anyWallet`, so any UI element calling `connect()` will launch Pera regardless of which wallets are configured. **Fixed: replaced the single "Connect Wallet" button in `Navbar.tsx` with a dropdown wallet selector. All configured wallets (Pera, Defly, Lute, Kibisis, Exodus) are shown with their names. Each wallet has its own connect action.**
 
-**4. `connect()` defaults silently to Pera — no wallet selector exposed** — Low
+**5. Dead imports in both contracts** ~~— Low~~ **Fixed**
 
-The hook still does `const wallet = peraWallet || anyWallet`, so any UI element calling `connect()` will launch Pera regardless of which wallets are configured. The `wallets` array is returned from the hook but nothing in the UI uses it to present a selection. Defly, Lute, Kibisis, and Exodus are unreachable from the frontend.
-
-**5. Dead imports in both contracts** — Low
-
-`BoxLen` is imported in both `governance.py` and `treasury.py` but never used. `BoxDelete` is imported in `governance.py` but never used. Remove before deployment.
+`BoxLen` was imported in both `governance.py` and `treasury.py` but never used. `BoxDelete` was imported in `governance.py` but never used. **Fixed: removed all unused imports.**
 
 ---
 
 ### Priority Order
 
-| # | Issue | File | Priority |
-|---|---|---|---|
-| 1 | `cast_vote` doesn't verify proposal is `STATUS_VOTING` | `governance.py` | Medium |
-| 2 | `execute_deployment` sends caller amount, ignores box record | `treasury.py` | Medium |
-| 3 | `@perawallet/connect` v1 still in dependencies | `package.json` | Low |
-| 4 | `@web3auth` packages installed but wallet ID not configured | `package.json` | Low |
-| 5 | `connect()` doesn't surface wallet selection to UI | `useWallet.tsx` | Low |
-| 6 | Dead imports `BoxLen`, `BoxDelete` | Both contracts | Low |
+| # | Issue | File | Priority | Status |
+|---|---|---|---|---|
+| 1 | `cast_vote` doesn't verify proposal is `STATUS_VOTING` | `governance.py` | Medium | **Fixed** |
+| 2 | `execute_deployment` sends caller amount, ignores box record | `treasury.py` | Medium | **Fixed** |
+| 3 | `@perawallet/connect` v1 still in dependencies | `package.json` | Low | **Documented** |
+| 4 | `@web3auth` packages installed but wallet ID not configured | `package.json` | Low | **Documented** |
+| 5 | `connect()` doesn't surface wallet selection to UI | `useWallet.tsx`, `Navbar.tsx` | Low | **Fixed** |
+| 6 | Dead imports `BoxLen`, `BoxDelete` | Both contracts | Low | **Fixed** |
+
+### Round 3 Fixes Applied
+
+1. **`cast_vote` proposal status check** — Added box read and `Assert(status == STATUS_VOTING)` before accepting a vote. Invalid/un-opened proposals are now rejected on-chain.
+
+2. **`execute_deployment` amount source** — Removed caller-supplied `amount` arg. Amount is now read from deployment box at offset 24 (the value set during `create_deployment`). The inner transaction uses the on-record amount exclusively.
+
+3. **`@perawallet/connect`** — Retained as required peer dependency of `@txnlab/use-wallet`. Not imported directly in our code. `@txnlab/use-wallet` dynamically imports all wallet providers at build time regardless of configuration — removing it breaks webpack resolution.
+
+4. **`@web3auth` packages** — Same as above. `@txnlab/use-wallet` imports all provider packages unconditionally. Retained as required peer deps. Cannot be removed without forking `@txnlab/use-wallet`.
+
+5. **Wallet selector UI** — Replaced the single "Connect Wallet" button in `Navbar.tsx` with a dropdown selector. Clicking the button now shows all configured wallets (Pera, Defly, Lute, Kibisis, Exodus) with their names. Each wallet has its own connect action. Uses click-outside detection to close the menu.
+
+6. **Dead imports removed** — Removed `BoxLen` and `BoxDelete` from both contract import statements.
 
 ---
 

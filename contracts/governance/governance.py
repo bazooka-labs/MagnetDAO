@@ -14,8 +14,8 @@ from pyteal import (
     Approve, Btoi, Itob, Concat, Gtxn, OnComplete, Mode, Subroutine,
     TealType, Cond, compileTeal, ScratchVar, Pop, Extract
 )
-from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace, BoxDelete
-from pyteal import BoxGet, BoxLen, App, AssetHolding
+from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace
+from pyteal import BoxGet, App, AssetHolding
 
 # Global state keys
 FOUNDERS_ADDRESS = Bytes("founder")
@@ -159,8 +159,22 @@ def approval_program():
     # Uses asset_holding_get to snapshot voter's Magnet ASA balance as vote weight
     # Double-vote prevention: BoxCreate fails if box already exists
     cast_vote = Seq([
-        # Voting must be open
+        # Voting must be open globally
         Assert(App.globalGet(VOTING_OPEN) == Int(1)),
+
+        # Verify target proposal is in STATUS_VOTING
+        (target_proposal_key := ScratchVar()).store(
+            Concat(
+                PROPOSAL_PREFIX,
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
+            )
+        ),
+        (target_box := BoxGet(target_proposal_key.load())),
+        Assert(target_box.hasValue()),
+        Assert(Btoi(Extract(target_box.value(), Int(0), Int(8))) == STATUS_VOTING),
 
         # Build vote box key: "v:" + itob(quarter) + itob(proposal_id) + voter
         (vote_key := ScratchVar()).store(

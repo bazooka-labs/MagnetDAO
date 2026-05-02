@@ -14,7 +14,7 @@ from pyteal import (
     TealType, Cond, compileTeal, ScratchVar, Pop, Extract
 )
 from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace
-from pyteal import BoxGet, BoxLen, App, Balance
+from pyteal import BoxGet, App, Balance
 from pyteal.ast.itxn import TxnField
 
 # Global state keys
@@ -112,25 +112,30 @@ def approval_program():
     ])
 
     # --- execute_deployment ---
-    # args: [1] deployment_id, [2] destination_address, [3] amount
-    # Transfers funds from treasury for liquidity deployment
+    # args: [1] deployment_id, [2] destination_address
+    # Transfers the recorded amount from treasury for liquidity deployment
+    # Amount is read from the deployment box (offset 24), not from caller args
     execute_deployment = Seq([
         only_founder(),
         (deploy_id := ScratchVar()).store(Btoi(Txn.application_args[1])),
         (dest_address := ScratchVar()).store(Txn.application_args[2]),
-        (amount := ScratchVar()).store(Btoi(Txn.application_args[3])),
 
         (box_key := ScratchVar()).store(
             Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
         ),
 
-        # Must be PENDING
+        # Read deployment box — must be PENDING
         (deploy_box := BoxGet(box_key.load())),
         Assert(deploy_box.hasValue()),
         (deploy_status := ScratchVar()).store(
             Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
         ),
         Assert(deploy_status.load() == DEPLOY_PENDING),
+
+        # Read approved amount from box at offset 24 (not from caller args)
+        (amount := ScratchVar()).store(
+            Btoi(Extract(deploy_box.value(), Int(24), Int(8)))
+        ),
         Assert(amount.load() <= (Balance(Global.current_application_address()) - MIN_BALANCE)),
 
         # Update status to ACTIVE
