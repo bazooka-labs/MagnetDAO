@@ -16,7 +16,7 @@ from pyteal import (
 )
 from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace
 from pyteal import BoxGet, App, AssetHolding, Len
-from pyteal.ast.itxn import TxnField
+from pyteal import TxnField
 
 # Global state keys
 FOUNDERS_ADDRESS = Bytes("founder")

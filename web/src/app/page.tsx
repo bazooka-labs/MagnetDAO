@@ -2,6 +2,7 @@ import Link from "next/link";
 import { StatCard } from "@/components/ui";
 import { MAGNET_TOKEN } from "@/lib/constants";
 import { HeroCTA } from "@/components/HeroCTA";
+import { LiveStats } from "@/components/LiveStats";
 import { ArrowRight, BarChart3, Lock, Vote, Wallet, Zap } from "lucide-react";
 
 export default function HomePage() {
@@ -57,6 +58,10 @@ export default function HomePage() {
               pools — connecting voting power, treasury deployment, and fee
               generation.
             </p>
+
+            <div className="mx-auto mt-10 max-w-3xl w-full">
+              <LiveStats />
+            </div>
 
             <HeroCTA />
           </div>
