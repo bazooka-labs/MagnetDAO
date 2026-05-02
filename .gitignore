@@ -9,3 +9,6 @@ __pycache__/
 .env.local
 deployment.json
 *.egg-info/
+.venv/
+contracts/.venv/
+contracts/build/

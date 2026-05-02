@@ -3,15 +3,19 @@ MagnetDAO Treasury Contract
 
 Manages treasury funds and liquidity deployment for the MagnetDAO.
 - Receives quarterly funding from Bazooka Labs revenue
-- Deploys liquidity to approved proposals (founder must approve)
+- Deploys liquidity with founder oversight
+- Fee model: treasury holds LP positions, harvests fees on liquidity changes
 - All deployments are on-chain and transparent
 """
 
 from pyteal import (
     Bytes, Int, Txn, Global, And, Or, Not, If, Assert, Seq, Reject,
     Approve, Btoi, Itob, Concat, Gtxn, OnComplete, Mode, Subroutine,
-    TealType, ScratchVar, Cond, compileTeal, Balance, Gaid
+    TealType, Cond, compileTeal, ScratchVar, Pop, Extract
 )
+from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace
+from pyteal import BoxGet, BoxLen, App, Balance
+from pyteal.ast.itxn import TxnField
 
 # Global state keys
 FOUNDERS_ADDRESS = Bytes("founder")
@@ -20,19 +24,33 @@ MAGNET_ASA_ID = Bytes("magnet_asa")
 TOTAL_FUNDED = Bytes("total_funded")
 TOTAL_DEPLOYED = Bytes("total_deployed")
 DEPLOYMENT_COUNT = Bytes("dep_count")
+TOTAL_FEES_HARVESTED = Bytes("total_fees")
 
-# Box prefix for deployments
-DEPLOY_PREFIX = Bytes("deploy:")
+# Box prefixes
+DEPLOY_PREFIX = Bytes("d:")
 
 # Deployment statuses
 DEPLOY_PENDING = Int(1)
 DEPLOY_ACTIVE = Int(2)
 DEPLOY_WITHDRAWN = Int(3)
 
+# Deployment box layout (144 bytes):
+# [0:8]   status
+# [8:16]  proposal_id
+# [16:24] project_asa_id
+# [24:32] amount (microAlgos deployed)
+# [32:64] deployer address (32 bytes)
+# [64:128] dex_name (64 bytes)
+# [128:136] lp_tokens_received (uint64)
+# [136:144] fees_harvested (uint64)
+DEPLOY_BOX_SIZE = Int(144)
+
+# Minimum balance requirement
+MIN_BALANCE = Int(100000)
+
 
 @Subroutine(TealType.none)
 def only_founder():
-    """Assert sender is the founder"""
     return Assert(Txn.sender() == App.globalGet(FOUNDERS_ADDRESS))
 
 
@@ -46,19 +64,18 @@ def approval_program():
         App.globalPut(TOTAL_FUNDED, Int(0)),
         App.globalPut(TOTAL_DEPLOYED, Int(0)),
         App.globalPut(DEPLOYMENT_COUNT, Int(0)),
+        App.globalPut(TOTAL_FEES_HARVESTED, Int(0)),
         Approve(),
     ])
 
-    on_opt_in = Seq([
-        Approve(),
-    ])
+    on_opt_in = Approve()
 
     # --- deposit_funds ---
-    # Called with a payment txn in group
-    # Funds the treasury with Algos from Bazooka Labs
+    # Group: [0] app call deposit, [1] payment from Bazooka Labs
     deposit_funds = Seq([
         only_founder(),
-        Assert(Gtxn[1].type_enum() == Int(1)),  # payment
+        Assert(Global.group_size() >= Int(2)),
+        Assert(Gtxn[1].type_enum() == TxnType.Payment),
         Assert(Gtxn[1].receiver() == Global.current_application_address()),
         App.globalPut(
             TOTAL_FUNDED,
@@ -68,118 +85,157 @@ def approval_program():
     ])
 
     # --- create_deployment ---
-    # args: proposal_id, project_asa_id, amount, dex_name
-    # Only founder can create deployment records
+    # args: [1] proposal_id, [2] project_asa_id, [3] amount, [4] dex_name
     create_deployment = Seq([
         only_founder(),
-        (amount := Btoi(Txn.application_args[2])),
-        Assert(amount <= (Balance(Global.current_application_address()) - Int(100000))),
+        (amount := ScratchVar()).store(Btoi(Txn.application_args[3])),
+        Assert(amount.load() <= (Balance(Global.current_application_address()) - MIN_BALANCE)),
+
         App.globalPut(DEPLOYMENT_COUNT, App.globalGet(DEPLOYMENT_COUNT) + Int(1)),
 
         (box_key := ScratchVar()).store(
-            Concat(
-                DEPLOY_PREFIX,
-                Itob(App.globalGet(DEPLOYMENT_COUNT))
-            )
+            Concat(DEPLOY_PREFIX, Itob(App.globalGet(DEPLOYMENT_COUNT)))
         ),
-        # Deployment data: status|proposal_id|project_asa|amount|dex|deployer
-        (deploy_data := ScratchVar()).store(
-            Concat(
-                Itob(DEPLOY_PENDING),
-                Concat(
-                    Bytes("|"),
-                    Concat(
-                        Txn.application_args[1],  # proposal_id
-                        Concat(
-                            Bytes("|"),
-                            Concat(
-                                Txn.application_args[2],  # project_asa_id
-                                Concat(
-                                    Bytes("|"),
-                                    Concat(
-                                        Txn.application_args[3],  # amount
-                                        Concat(
-                                            Bytes("|"),
-                                            Concat(
-                                                Txn.application_args[4],  # dex_name
-                                                Concat(
-                                                    Bytes("|"),
-                                                    Txn.sender(),
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            )
-        ),
-        BoxCreate(box_key.load(), Int(512)),
-        BoxReplace(box_key.load(), Int(0), deploy_data.load()),
+
+        Pop(BoxCreate(box_key.load(), DEPLOY_BOX_SIZE)),
+
+        BoxReplace(box_key.load(), Int(0), Itob(DEPLOY_PENDING)),
+        BoxReplace(box_key.load(), Int(8), Txn.application_args[1]),
+        BoxReplace(box_key.load(), Int(16), Txn.application_args[2]),
+        BoxReplace(box_key.load(), Int(24), Txn.application_args[3]),
+        BoxReplace(box_key.load(), Int(32), Txn.sender()),
+        BoxReplace(box_key.load(), Int(64), Txn.application_args[4]),
+        BoxReplace(box_key.load(), Int(128), Itob(Int(0))),
+        BoxReplace(box_key.load(), Int(136), Itob(Int(0))),
+
         Approve(),
     ])
 
     # --- execute_deployment ---
-    # args: deployment_id, destination_address
-    # Transfers funds from treasury to deploy
+    # args: [1] deployment_id, [2] destination_address, [3] amount
+    # Transfers funds from treasury for liquidity deployment
     execute_deployment = Seq([
         only_founder(),
-        (deploy_id := Btoi(Txn.application_args[1])),
-        (dest_address := Txn.application_args[2]),
-        (amount := Btoi(Txn.application_args[3])),
+        (deploy_id := ScratchVar()).store(Btoi(Txn.application_args[1])),
+        (dest_address := ScratchVar()).store(Txn.application_args[2]),
+        (amount := ScratchVar()).store(Btoi(Txn.application_args[3])),
 
-        # Update deployment status to ACTIVE
         (box_key := ScratchVar()).store(
-            Concat(DEPLOY_PREFIX, Itob(deploy_id))
+            Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
         ),
+
+        # Must be PENDING
+        (deploy_box := BoxGet(box_key.load())),
+        (deploy_status := ScratchVar()).store(
+            Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
+        ),
+        Assert(deploy_status.load() == DEPLOY_PENDING),
+        Assert(amount.load() <= (Balance(Global.current_application_address()) - MIN_BALANCE)),
+
+        # Update status to ACTIVE
         BoxReplace(box_key.load(), Int(0), Itob(DEPLOY_ACTIVE)),
 
-        # Update total deployed
-        App.globalPut(
-            TOTAL_DEPLOYED,
-            App.globalGet(TOTAL_DEPLOYED) + amount
-        ),
+        App.globalPut(TOTAL_DEPLOYED, App.globalGet(TOTAL_DEPLOYED) + amount.load()),
 
         # Send Algos to destination
         InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields({
-            InnerTxnField.type_enum: TxnType.Payment,
-            InnerTxnField.receiver: dest_address,
-            InnerTxnField.amount: amount,
-            InnerTxnField.fee: Int(0),  # fee pooling
-        }),
+        InnerTxnBuilder.SetField(TxnField.type_enum, TxnType.Payment),
+        InnerTxnBuilder.SetField(TxnField.receiver, dest_address.load()),
+        InnerTxnBuilder.SetField(TxnField.amount, amount.load()),
+        InnerTxnBuilder.SetField(TxnField.fee, Int(0)),
         InnerTxnBuilder.Submit(),
+
         Approve(),
     ])
 
-    # --- receive_fees ---
-    # Swap fees from liquidity pools come back here
-    # args: amount
-    receive_fees = Seq([
-        # Anyone can send fees to treasury
-        Assert(Gtxn[1].type_enum() == Int(1)),
-        Assert(Gtxn[1].receiver() == Global.current_application_address()),
+    # --- record_lp_tokens ---
+    # args: [1] deployment_id, [2] lp_tokens_amount
+    # Records LP tokens received after DEX deployment
+    record_lp_tokens = Seq([
+        only_founder(),
+        (deploy_id := ScratchVar()).store(Btoi(Txn.application_args[1])),
+        (lp_amount := ScratchVar()).store(Btoi(Txn.application_args[2])),
+
+        (box_key := ScratchVar()).store(
+            Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
+        ),
+        (deploy_box := BoxGet(box_key.load())),
+        (deploy_status := ScratchVar()).store(
+            Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
+        ),
+        Assert(deploy_status.load() == DEPLOY_ACTIVE),
+
+        BoxReplace(box_key.load(), Int(128), Itob(lp_amount.load())),
+        Approve(),
+    ])
+
+    # --- record_fee_harvest ---
+    # args: [1] deployment_id, [2] fees_amount
+    # Records fees harvested from removing/rebalancing liquidity
+    # On Algorand DEXes (Tinyman, Pact), fees accrue to LP holders
+    # and are realized when liquidity positions are adjusted
+    record_fee_harvest = Seq([
+        only_founder(),
+        (deploy_id := ScratchVar()).store(Btoi(Txn.application_args[1])),
+        (fees_amount := ScratchVar()).store(Btoi(Txn.application_args[2])),
+
+        (box_key := ScratchVar()).store(
+            Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
+        ),
+
+        # Read current fees for this deployment
+        (deploy_box := BoxGet(box_key.load())),
+        (current_fees := ScratchVar()).store(
+            Btoi(Extract(deploy_box.value(), Int(136), Int(8)))
+        ),
+        BoxReplace(
+            box_key.load(),
+            Int(136),
+            Itob(current_fees.load() + fees_amount.load())
+        ),
+
+        App.globalPut(
+            TOTAL_FEES_HARVESTED,
+            App.globalGet(TOTAL_FEES_HARVESTED) + fees_amount.load()
+        ),
+
         Approve(),
     ])
 
     # --- withdraw_fees ---
+    # args: [1] amount
     # Only founder can withdraw accumulated fees
-    # args: amount
     withdraw_fees = Seq([
         only_founder(),
-        (amount := Btoi(Txn.application_args[1])),
-        Assert(amount <= (Balance(Global.current_application_address()) - Int(100000))),
+        (amount := ScratchVar()).store(Btoi(Txn.application_args[1])),
+        Assert(amount.load() <= (Balance(Global.current_application_address()) - MIN_BALANCE)),
 
         InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields({
-            InnerTxnField.type_enum: TxnType.Payment,
-            InnerTxnField.receiver: Txn.sender(),
-            InnerTxnField.amount: amount,
-            InnerTxnField.fee: Int(0),
-        }),
+        InnerTxnBuilder.SetField(TxnField.type_enum, TxnType.Payment),
+        InnerTxnBuilder.SetField(TxnField.receiver, Txn.sender()),
+        InnerTxnBuilder.SetField(TxnField.amount, amount.load()),
+        InnerTxnBuilder.SetField(TxnField.fee, Int(0)),
         InnerTxnBuilder.Submit(),
+
+        Approve(),
+    ])
+
+    # --- close_deployment ---
+    # args: [1] deployment_id
+    close_deployment = Seq([
+        only_founder(),
+        (deploy_id := ScratchVar()).store(Btoi(Txn.application_args[1])),
+
+        (box_key := ScratchVar()).store(
+            Concat(DEPLOY_PREFIX, Itob(deploy_id.load()))
+        ),
+        (deploy_box := BoxGet(box_key.load())),
+        (deploy_status := ScratchVar()).store(
+            Btoi(Extract(deploy_box.value(), Int(0), Int(8)))
+        ),
+        Assert(deploy_status.load() == DEPLOY_ACTIVE),
+        BoxReplace(box_key.load(), Int(0), Itob(DEPLOY_WITHDRAWN)),
+
         Approve(),
     ])
 
@@ -205,17 +261,18 @@ def approval_program():
              [Txn.application_args[0] == Bytes("deposit"), deposit_funds],
              [Txn.application_args[0] == Bytes("create_deploy"), create_deployment],
              [Txn.application_args[0] == Bytes("execute_deploy"), execute_deployment],
-             [Txn.application_args[0] == Bytes("receive_fees"), receive_fees],
+             [Txn.application_args[0] == Bytes("record_lp"), record_lp_tokens],
+             [Txn.application_args[0] == Bytes("record_fees"), record_fee_harvest],
              [Txn.application_args[0] == Bytes("withdraw_fees"), withdraw_fees],
+             [Txn.application_args[0] == Bytes("close_deploy"), close_deployment],
              [Txn.application_args[0] == Bytes("update_founder"), update_founder],
              [Txn.application_args[0] == Bytes("update_gov_app"), update_governance_app],
          )],
-        Reject(),
+        [Int(1), Reject()],
     )
 
 
 def clear_program():
-    """Clear state program"""
     return Approve()
 
 

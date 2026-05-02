@@ -1,92 +1,74 @@
 "use client";
 
-import { PeraWalletConnect } from "@perawallet/connect";
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
-
-interface WalletContextType {
-  address: string | null;
-  isConnected: boolean;
-  isConnecting: boolean;
-  connect: () => Promise<void>;
-  disconnect: () => void;
-  peraWallet: PeraWalletConnect | null;
-}
-
-const WalletContext = createContext<WalletContextType>({
-  address: null,
-  isConnected: false,
-  isConnecting: false,
-  connect: async () => {},
-  disconnect: () => {},
-  peraWallet: null,
-});
+  WalletProvider as UseWalletProvider,
+  useWallet as useUseWallet,
+  WalletManager,
+  WalletId,
+  NetworkId,
+  type Wallet,
+} from "@txnlab/use-wallet-react";
+import { type ReactNode, useMemo } from "react";
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [peraWallet, setPeraWallet] = useState<PeraWalletConnect | null>(null);
-  const [address, setAddress] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-
-  useEffect(() => {
-    const wallet = new PeraWalletConnect({
-      shouldShowSignTxnToast: true,
-    });
-    setPeraWallet(wallet);
-
-    wallet.reconnectSession().then((accounts) => {
-      if (accounts.length) {
-        setAddress(accounts[0]);
-      }
-    });
-
-    return () => {
-      wallet.disconnect();
-    };
-  }, []);
-
-  const connect = useCallback(async () => {
-    if (!peraWallet) return;
-    setIsConnecting(true);
-    try {
-      const accounts = await peraWallet.connect();
-      if (accounts.length) {
-        setAddress(accounts[0]);
-      }
-    } catch (error) {
-      console.error("Wallet connection failed:", error);
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [peraWallet]);
-
-  const disconnect = useCallback(() => {
-    if (!peraWallet) return;
-    peraWallet.disconnect();
-    setAddress(null);
-  }, [peraWallet]);
+  const manager = useMemo(
+    () =>
+      new WalletManager({
+        defaultNetwork: NetworkId.TESTNET,
+        networks: {
+          [NetworkId.TESTNET]: {
+            algod: {
+              baseServer: "https://testnet-api.algonode.cloud",
+              port: "",
+              token: "",
+            },
+          },
+        },
+      }),
+    []
+  );
 
   return (
-    <WalletContext.Provider
-      value={{
-        address,
-        isConnected: !!address,
-        isConnecting,
-        connect,
-        disconnect,
-        peraWallet,
-      }}
-    >
+    <UseWalletProvider manager={manager}>
       {children}
-    </WalletContext.Provider>
+    </UseWalletProvider>
   );
 }
 
 export function useWallet() {
-  return useContext(WalletContext);
+  const {
+    activeAccount,
+    wallets,
+    isReady,
+    activeAddress,
+  } = useUseWallet();
+
+  const isConnecting = wallets?.some((w: Wallet) => w.isActive && !w.isConnected);
+
+  const peraWallet = wallets?.find(
+    (w: Wallet) => w.id === WalletId.PERA
+  );
+  const anyWallet = wallets?.[0];
+
+  return {
+    address: activeAddress ?? null,
+    isConnected: !!activeAccount,
+    isConnecting: !!isConnecting,
+    isReady,
+    activeAccount,
+    wallets,
+    peraWallet,
+    connect: async () => {
+      const wallet = peraWallet || anyWallet;
+      if (wallet) {
+        await wallet.connect();
+      }
+    },
+    disconnect: async () => {
+      const wallet = wallets?.find((w: Wallet) => w.isActive);
+      if (wallet) {
+        await wallet.disconnect();
+      }
+    },
+  };
 }

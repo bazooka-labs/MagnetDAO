@@ -2,7 +2,11 @@
 MagnetDAO Contract Deployment Script
 
 Usage:
-  python deploy.py --network testnet --founder <ALGO_ADDRESS> --deploy
+  # Compile and deploy:
+  python deploy.py --network testnet --deploy
+
+  # Compile only (dry run):
+  python deploy.py --network testnet
 
 Prerequisites:
   - Funded Algorand account
@@ -10,15 +14,16 @@ Prerequisites:
 """
 
 import os
+import sys
 import json
 import argparse
+import base64
 from algosdk import account, mnemonic
 from algosdk.v2client import algod
 from algosdk.transaction import (
     ApplicationCreateTxn, OnComplete,
     StateSchema, wait_for_confirmation
 )
-from algosdk.atomic_transaction_composer import AtomicTransactionComposer
 
 from governance.governance import approval_program as gov_approval, clear_program as gov_clear
 from treasury.treasury import approval_program as tre_approval, clear_program as tre_clear
@@ -39,7 +44,6 @@ def get_client(network: str) -> algod.AlgodClient:
 
 def compile_program(client: algod.AlgodClient, teal_source: str) -> bytes:
     compile_response = client.compile(teal_source)
-    import base64
     return base64.b64decode(compile_response["result"])
 
 
@@ -81,27 +85,55 @@ def main():
     parser = argparse.ArgumentParser(description="Deploy MagnetDAO contracts")
     parser.add_argument("--network", default="testnet", choices=["testnet", "mainnet"])
     parser.add_argument("--magnet-asa", type=int, default=3081853135)
-    parser.add_argument("--deploy", action="store_true")
+    parser.add_argument("--deploy", action="store_true",
+                        help="Actually deploy contracts (default: compile only)")
+    parser.add_argument("--compile-only", action="store_true",
+                        help="Only compile TEAL, don't deploy")
     args = parser.parse_args()
 
+    gov_approval_teal = compileTeal(gov_approval(), mode=Mode.Application, version=8)
+    gov_clear_teal = compileTeal(gov_clear(), mode=Mode.Application, version=8)
+    tre_approval_teal = compileTeal(tre_approval(), mode=Mode.Application, version=8)
+    tre_clear_teal = compileTeal(tre_clear(), mode=Mode.Application, version=8)
+
+    print("=== Compiled TEAL ===")
+    print(f"Governance approval: {len(gov_approval_teal)} chars")
+    print(f"Governance clear:    {len(gov_clear_teal)} chars")
+    print(f"Treasury approval:   {len(tre_approval_teal)} chars")
+    print(f"Treasury clear:      {len(tre_clear_teal)} chars")
+
+    # Write compiled TEAL to files for inspection
+    os.makedirs("build", exist_ok=True)
+    with open("build/governance_approval.teal", "w") as f:
+        f.write(gov_approval_teal)
+    with open("build/governance_clear.teal", "w") as f:
+        f.write(gov_clear_teal)
+    with open("build/treasury_approval.teal", "w") as f:
+        f.write(tre_approval_teal)
+    with open("build/treasury_clear.teal", "w") as f:
+        f.write(tre_clear_teal)
+    print("Wrote TEAL files to contracts/build/")
+
+    if args.compile_only or not args.deploy:
+        print("\nCompile complete. Use --deploy to deploy on-chain.")
+        if not args.deploy and not args.compile_only:
+            print("(No --deploy flag provided, skipping deployment)")
+        return
+
+    # --- Deploy ---
     mnemonic_phrase = os.getenv("FUNDER_MNEMONIC")
     if not mnemonic_phrase:
-        print("Error: Set FUNDER_MNEMONIC environment variable")
-        return
+        print("\nError: Set FUNDER_MNEMONIC environment variable to deploy")
+        print("Export it: export FUNDER_MNEMONIC='your 25 word mnemonic'")
+        sys.exit(1)
 
     private_key = mnemonic.to_private_key(mnemonic_phrase)
     sender = account.address_from_private_key(private_key)
     client = get_client(args.network)
 
-    print(f"Deploying to {args.network}")
+    print(f"\n=== Deploying to {args.network} ===")
     print(f"Deployer: {sender}")
     print(f"Magnet ASA: {args.magnet_asa}")
-
-    gov_approval_teal = compileTeal(gov_approval(), mode=Mode.Application, version=8)
-    gov_clear_teal = compileTeal(gov_clear(), mode=Mode.Application, version=8)
-
-    tre_approval_teal = compileTeal(tre_approval(), mode=Mode.Application, version=8)
-    tre_clear_teal = compileTeal(tre_clear(), mode=Mode.Application, version=8)
 
     gov_schema = StateSchema(num_uints=8, num_byte_slices=4)
     local_schema = StateSchema(num_uints=0, num_byte_slices=0)

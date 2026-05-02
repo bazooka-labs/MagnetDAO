@@ -3,15 +3,19 @@ MagnetDAO Governance Contract
 
 Manages quarterly proposal lifecycle and on-chain voting for the MagnetDAO.
 - Proposals are submitted with project details (name, pair, capital, timeline, risks)
-- Voting happens at end of quarter with 1 Magnet = 1 Vote weighting
-- Founder retains final approval authority
+- Voting uses 1 Magnet = 1 Vote weighting (checked via asset_holding_get)
+- Double-vote prevention via box existence check
+- On-chain vote tallying per proposal
+- Founder retains final approval authority with tally reference
 """
 
 from pyteal import (
     Bytes, Int, Txn, Global, And, Or, Not, If, Assert, Seq, Reject,
     Approve, Btoi, Itob, Concat, Gtxn, OnComplete, Mode, Subroutine,
-    TealType, abi, compileTeal
+    TealType, Cond, compileTeal, ScratchVar, Pop, Extract
 )
+from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace, BoxDelete
+from pyteal import BoxGet, BoxLen, App, AssetHolding
 
 # Global state keys
 FOUNDERS_ADDRESS = Bytes("founder")
@@ -21,10 +25,11 @@ QUARTER_START = Bytes("q_start")
 PROPOSAL_COUNT = Bytes("p_count")
 VOTING_OPEN = Bytes("vote_open")
 QUARTER_SECONDS = Bytes("q_secs")
+TOTAL_VOTES_CAST = Bytes("total_votes")
 
-# Box name prefix for proposals
-PROPOSAL_PREFIX = Bytes("prop:")
-VOTE_PREFIX = Bytes("vote:")
+# Box name prefixes
+PROPOSAL_PREFIX = Bytes("p:")
+VOTE_PREFIX = Bytes("v:")
 
 # Proposal statuses
 STATUS_PENDING = Int(1)
@@ -36,17 +41,29 @@ STATUS_DEPLOYED = Int(5)
 # Quarter duration: 90 days in seconds
 DEFAULT_QUARTER_SECONDS = Int(7776000)
 
+# Proposal box layout (fixed offsets, 256 bytes):
+# [0:8]   status (uint64)
+# [8:16]  quarter (uint64)
+# [16:24] votes_for total (uint64)
+# [24:32] votes_against total (uint64)
+# [32:64] submitter address (32 bytes)
+# [64:128] app_name (64 bytes)
+# [128:192] liquidity_pair (64 bytes)
+# [192:200] capital_requested (uint64)
+# [200:208] timeline_days (uint64)
+# [208:256] risk_hash (48 bytes)
+PROPOSAL_BOX_SIZE = Int(256)
+
+# Vote box layout (16 bytes):
+# [0:8]  vote weight (Magnet balance snapshot)
+# [8:16] vote direction (1=for, 0=against)
+VOTE_BOX_SIZE = Int(16)
+
 
 @Subroutine(TealType.none)
 def only_founder():
     """Assert sender is the founder"""
     return Assert(Txn.sender() == App.globalGet(FOUNDERS_ADDRESS))
-
-
-@Subroutine(TealType.none)
-def only_admin():
-    """Assert sender is the app creator (admin)"""
-    return Assert(Txn.sender() == Global.creator_address())
 
 
 def approval_program():
@@ -60,86 +77,52 @@ def approval_program():
         App.globalPut(PROPOSAL_COUNT, Int(0)),
         App.globalPut(VOTING_OPEN, Int(0)),
         App.globalPut(QUARTER_SECONDS, DEFAULT_QUARTER_SECONDS),
+        App.globalPut(TOTAL_VOTES_CAST, Int(0)),
         Approve(),
     ])
 
-    on_opt_in = Seq([
-        Approve(),
-    ])
+    on_opt_in = Approve()
 
     # --- create_proposal ---
-    # args: app_name, app_url, liquidity_pair, capital_requested, timeline_days, risk_hash
-    # Requires a payment of 1 Algo to prevent spam
+    # Group: [0] app call create_proposal, [1] payment 1 Algo deposit
+    # args: [1] app_name, [2] liquidity_pair, [3] capital_requested, [4] timeline_days, [5] risk_hash
     create_proposal = Seq([
-        # Only when not in voting phase
         Assert(App.globalGet(VOTING_OPEN) == Int(0)),
-        # Require 1 Algo deposit
-        Assert(Gtxn[1].type_enum() == Int(1)),  # payment txn
+        Assert(Global.group_size() >= Int(2)),
+        Assert(Gtxn[1].type_enum() == TxnType.Payment),
         Assert(Gtxn[1].amount() >= Int(1000000)),
         Assert(Gtxn[1].receiver() == Global.current_application_address()),
 
-        # Increment proposal count
         App.globalPut(PROPOSAL_COUNT, App.globalGet(PROPOSAL_COUNT) + Int(1)),
 
-        # Store proposal data in box
-        # Box key: prop:<quarter>:<id>
-        # Box value: concatenated fields with delimiters
-        (proposal_id := ScratchVar()).store(
-            Itob(App.globalGet(PROPOSAL_COUNT))
-        ),
         (box_key := ScratchVar()).store(
             Concat(
                 PROPOSAL_PREFIX,
-                Concat(Itob(App.globalGet(CURRENT_QUARTER)), proposal_id.load())
-            )
-        ),
-        # Proposal data: status|submitter|app_name|pair|capital|timeline|risk_hash
-        (proposal_data := ScratchVar()).store(
-            Concat(
-                Itob(STATUS_PENDING),
                 Concat(
-                    Bytes("|"),
-                    Concat(
-                        Txn.sender(),
-                        Concat(
-                            Bytes("|"),
-                            Concat(
-                                Txn.application_args[1],  # app_name
-                                Concat(
-                                    Bytes("|"),
-                                    Concat(
-                                        Txn.application_args[2],  # liquidity_pair
-                                        Concat(
-                                            Bytes("|"),
-                                            Concat(
-                                                Txn.application_args[3],  # capital_requested
-                                                Concat(
-                                                    Bytes("|"),
-                                                    Concat(
-                                                        Txn.application_args[4],  # timeline_days
-                                                        Concat(
-                                                            Bytes("|"),
-                                                            Txn.application_args[5]  # risk_hash
-                                                        ),
-                                                    ),
-                                                ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Itob(App.globalGet(PROPOSAL_COUNT))
+                )
             )
         ),
-        BoxCreate(box_key.load(), Int(512)),
-        BoxReplace(box_key.load(), Int(0), proposal_data.load()),
+
+        Pop(BoxCreate(box_key.load(), PROPOSAL_BOX_SIZE)),
+
+        BoxReplace(box_key.load(), Int(0), Itob(STATUS_PENDING)),
+        BoxReplace(box_key.load(), Int(8), Itob(App.globalGet(CURRENT_QUARTER))),
+        BoxReplace(box_key.load(), Int(16), Itob(Int(0))),
+        BoxReplace(box_key.load(), Int(24), Itob(Int(0))),
+        BoxReplace(box_key.load(), Int(32), Txn.sender()),
+        BoxReplace(box_key.load(), Int(64), Txn.application_args[1]),
+        BoxReplace(box_key.load(), Int(128), Txn.application_args[2]),
+        BoxReplace(box_key.load(), Int(192), Txn.application_args[3]),
+        BoxReplace(box_key.load(), Int(200), Txn.application_args[4]),
+        BoxReplace(box_key.load(), Int(208), Txn.application_args[5]),
+
         Approve(),
     ])
 
     # --- open_voting ---
-    # Only founder can open voting
+    # Only founder can open voting phase
     open_voting = Seq([
         only_founder(),
         Assert(App.globalGet(VOTING_OPEN) == Int(0)),
@@ -148,30 +131,77 @@ def approval_program():
     ])
 
     # --- cast_vote ---
-    # args: proposal_id
-    # Requires opt-in and holding Magnet tokens
-    # Inner txn to verify Magnet ASA balance
+    # args: [1] proposal_id (bytes uint64), [2] vote_direction (bytes: 1=for, 0=against)
+    # Uses asset_holding_get to snapshot voter's Magnet ASA balance as vote weight
+    # Double-vote prevention: BoxCreate fails if box already exists
     cast_vote = Seq([
+        # Voting must be open
         Assert(App.globalGet(VOTING_OPEN) == Int(1)),
-        # Check voter has Magnet token by verifying account min balance
-        # (Actual balance check would use inner txn or oracle)
-        # Store vote: vote:<quarter>:<proposal_id>:<voter>
+
+        # Build vote box key: "v:" + itob(quarter) + itob(proposal_id) + voter
         (vote_key := ScratchVar()).store(
             Concat(
                 VOTE_PREFIX,
                 Concat(
                     Itob(App.globalGet(CURRENT_QUARTER)),
                     Concat(
-                        Txn.application_args[1],  # proposal_id
-                        Txn.sender(),
-                    ),
-                ),
+                        Txn.application_args[1],  # proposal_id as bytes
+                        Txn.sender()
+                    )
+                )
             )
         ),
-        # Store voter's Magnet balance snapshot as vote weight
-        # In production, this would snapshot the ASA balance
-        BoxCreate(vote_key.load(), Int(8)),
-        BoxReplace(vote_key.load(), Int(0), Itob(Int(1))),  # simplified weight
+
+        # Double-vote prevention: BoxCreate fails if box exists (returns 0)
+        (create_result := ScratchVar()).store(
+            BoxCreate(vote_key.load(), VOTE_BOX_SIZE)
+        ),
+        Assert(create_result.load() == Int(1)),
+
+        # Get voter's Magnet ASA balance as vote weight
+        (magnet_balance := AssetHolding.balance(
+            Txn.sender(),
+            App.globalGet(MAGNET_ASA_ID)
+        )),
+        Assert(magnet_balance.hasValue()),
+        Assert(magnet_balance.value() > Int(0)),
+
+        # Store vote data
+        BoxReplace(vote_key.load(), Int(0), Itob(magnet_balance.value())),
+        BoxReplace(vote_key.load(), Int(8), Txn.application_args[2]),
+
+        # Update proposal tally
+        (proposal_key := ScratchVar()).store(
+            Concat(
+                PROPOSAL_PREFIX,
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
+            )
+        ),
+
+        # Read and update the correct counter
+        If(Btoi(Txn.application_args[2]) == Int(1))
+        .Then(
+            # Vote FOR
+            (proposal_box := BoxGet(proposal_key.load())),
+            (cur_for := ScratchVar()).store(
+                Btoi(Extract(proposal_box.value(), Int(16), Int(8)))
+            ),
+            BoxReplace(proposal_key.load(), Int(16), Itob(cur_for.load() + magnet_balance.value()))
+        )
+        .Else(
+            # Vote AGAINST
+            (proposal_box := BoxGet(proposal_key.load())),
+            (cur_against := ScratchVar()).store(
+                Btoi(Extract(proposal_box.value(), Int(24), Int(8)))
+            ),
+            BoxReplace(proposal_key.load(), Int(24), Itob(cur_against.load() + magnet_balance.value()))
+        ),
+
+        App.globalPut(TOTAL_VOTES_CAST, App.globalGet(TOTAL_VOTES_CAST) + Int(1)),
+
         Approve(),
     ])
 
@@ -185,36 +215,99 @@ def approval_program():
     ])
 
     # --- finalize_proposal ---
-    # args: proposal_id, new_status (3=approved, 4=rejected)
-    # Only founder can finalize
+    # args: [1] proposal_id (bytes uint64)
+    # Reads on-chain tally and sets status to APPROVED or REJECTED
     finalize_proposal = Seq([
         only_founder(),
-        (proposal_id := Btoi(Txn.application_args[1])),
-        (new_status := Btoi(Txn.application_args[2])),
-        # Update proposal status in box
-        (box_key := ScratchVar()).store(
+        Assert(App.globalGet(VOTING_OPEN) == Int(0)),
+
+        (proposal_key := ScratchVar()).store(
             Concat(
                 PROPOSAL_PREFIX,
-                Concat(Itob(App.globalGet(CURRENT_QUARTER)), Itob(proposal_id))
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
             )
         ),
-        BoxReplace(box_key.load(), Int(0), Itob(new_status)),
+
+        # Read current status
+        (proposal_box := BoxGet(proposal_key.load())),
+        (current_status := ScratchVar()).store(
+            Btoi(Extract(proposal_box.value(), Int(0), Int(8)))
+        ),
+        Assert(current_status.load() == STATUS_VOTING),
+
+        # Read tallies
+        (votes_for := ScratchVar()).store(
+            Btoi(Extract(proposal_box.value(), Int(16), Int(8)))
+        ),
+        (votes_against := ScratchVar()).store(
+            Btoi(Extract(proposal_box.value(), Int(24), Int(8)))
+        ),
+
+        # Determine outcome: for > against = approved
+        If(votes_for.load() > votes_against.load())
+        .Then(BoxReplace(proposal_key.load(), Int(0), Itob(STATUS_APPROVED)))
+        .Else(BoxReplace(proposal_key.load(), Int(0), Itob(STATUS_REJECTED))),
+
+        Approve(),
+    ])
+
+    # --- override_proposal ---
+    # args: [1] proposal_id (bytes uint64), [2] new_status (bytes uint64)
+    # Founder override safety valve
+    override_proposal = Seq([
+        only_founder(),
+        (proposal_key := ScratchVar()).store(
+            Concat(
+                PROPOSAL_PREFIX,
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
+            )
+        ),
+        (new_status := ScratchVar()).store(Btoi(Txn.application_args[2])),
+        Assert(Or(new_status.load() == STATUS_APPROVED, new_status.load() == STATUS_REJECTED)),
+        BoxReplace(proposal_key.load(), Int(0), Itob(new_status.load())),
+        Approve(),
+    ])
+
+    # --- mark_deployed ---
+    # args: [1] proposal_id (bytes uint64)
+    mark_deployed = Seq([
+        only_founder(),
+        (proposal_key := ScratchVar()).store(
+            Concat(
+                PROPOSAL_PREFIX,
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
+            )
+        ),
+        (proposal_box := BoxGet(proposal_key.load())),
+        (current_status := ScratchVar()).store(
+            Btoi(Extract(proposal_box.value(), Int(0), Int(8)))
+        ),
+        Assert(current_status.load() == STATUS_APPROVED),
+        BoxReplace(proposal_key.load(), Int(0), Itob(STATUS_DEPLOYED)),
         Approve(),
     ])
 
     # --- advance_quarter ---
-    # Only founder can advance to next quarter
     advance_quarter = Seq([
         only_founder(),
         App.globalPut(CURRENT_QUARTER, App.globalGet(CURRENT_QUARTER) + Int(1)),
         App.globalPut(QUARTER_START, Global.latest_timestamp()),
         App.globalPut(PROPOSAL_COUNT, Int(0)),
         App.globalPut(VOTING_OPEN, Int(0)),
+        App.globalPut(TOTAL_VOTES_CAST, Int(0)),
         Approve(),
     ])
 
     # --- update_founder ---
-    # args: new_founder_address
     update_founder = Seq([
         only_founder(),
         App.globalPut(FOUNDERS_ADDRESS, Txn.application_args[1]),
@@ -232,15 +325,16 @@ def approval_program():
              [Txn.application_args[0] == Bytes("cast_vote"), cast_vote],
              [Txn.application_args[0] == Bytes("close_voting"), close_voting],
              [Txn.application_args[0] == Bytes("finalize"), finalize_proposal],
+             [Txn.application_args[0] == Bytes("override"), override_proposal],
+             [Txn.application_args[0] == Bytes("mark_deployed"), mark_deployed],
              [Txn.application_args[0] == Bytes("advance_quarter"), advance_quarter],
              [Txn.application_args[0] == Bytes("update_founder"), update_founder],
          )],
-        Reject(),
+        [Int(1), Reject()],
     )
 
 
 def clear_program():
-    """Clear state program"""
     return Approve()
 
 

@@ -188,18 +188,41 @@ Flagged in MiMo's own todo list. Should be on 14.2.29+ or migrated to Next.js 15
 
 ### Priority Order to Fix
 
-| # | Issue | Priority |
-|---|---|---|
-| 1 | Fix contract imports so they compile | Blocker |
-| 2 | Implement real Magnet balance check in `cast_vote` | Blocker |
-| 3 | Add double-vote prevention in `cast_vote` | Blocker |
-| 4 | Add vote tallying + connect finalize to tally | High |
-| 5 | Treasury verifies proposal status before deploy | High |
-| 6 | Fix `--deploy` flag in `deploy.py` | High |
-| 7 | Upgrade Next.js + migrate to `use-wallet` | High |
-| 8 | Deploy to testnet → populate app IDs | High |
-| 9 | Rethink fee accrual model | Medium |
-| 10 | Consider migrating contracts to PuyaPy | Medium |
+| # | Issue | Priority | Status |
+|---|---|---|---|
+| 1 | Fix contract imports so they compile | Blocker | **Done** |
+| 2 | Implement real Magnet balance check in `cast_vote` | Blocker | **Done** |
+| 3 | Add double-vote prevention in `cast_vote` | Blocker | **Done** |
+| 4 | Add vote tallying + connect finalize to tally | High | **Done** |
+| 5 | Treasury verifies proposal status before deploy | High | **Done** |
+| 6 | Fix `--deploy` flag in `deploy.py` | High | **Done** |
+| 7 | Upgrade Next.js + migrate to `use-wallet` | High | **Done** |
+| 8 | Deploy to testnet → populate app IDs | High | Pending |
+| 9 | Rethink fee accrual model | Medium | **Done** |
+| 10 | Consider migrating contracts to PuyaPy | Medium | Staged (PyTeal 0.27 w/ proper imports) |
+
+---
+
+## Audit Fixes Applied
+
+> Fixed on 2026-05-02
+
+### Contracts
+
+1. **Fixed all imports** — Both contracts now use correct PyTeal 0.27 API: `TxnField` enum from `pyteal.ast.itxn`, `BoxGet`/`BoxCreate`/`BoxReplace` from `pyteal`, `Pop` for consuming uint64 return values
+2. **Real vote weight** — `cast_vote` uses `AssetHolding.balance(voter, magnet_asa_id)` to snapshot the voter's actual Magnet ASA balance as vote weight
+3. **Double-vote prevention** — `cast_vote` uses `BoxCreate` which returns 0 if the box already exists; contract asserts the return value is 1
+4. **On-chain vote tallying** — Proposal boxes now store `votes_for` at offset 16 and `votes_against` at offset 24. Each vote increments the appropriate counter. `finalize_proposal` reads the tally and auto-sets APPROVED or REJECTED based on which is higher
+5. **Treasury proposal verification** — `execute_deployment` reads the deployment box status (must be PENDING). New `mark_deployed` function on governance requires proposal to be STATUS_APPROVED
+6. **`--deploy` flag fixed** — `deploy.py` now properly gates deployment behind `--deploy` flag. Default behavior is compile-only. Added `--compile-only` flag and writes TEAL to `build/` directory
+7. **Fee model redesigned** — Removed `receive_fees` (which assumed a nonexistent fee routing mechanism). Replaced with `record_fee_harvest` and `record_lp_tokens` which track LP positions and realized fees from liquidity adjustments. Treasury now acts as an LP position holder that harvests fees on withdrawal/rebalancing
+8. **Both contracts compile** with PyTeal 0.27 via Python 3.12 venv at `contracts/.venv/`
+
+### Web App
+
+9. **Next.js upgraded** — From 14.2.18 (security vuln) to 14.2.35 (latest patched 14.x)
+10. **Wallet migrated** — Replaced `@perawallet/connect` v1 (WalletConnect v1, deprecated) with `@txnlab/use-wallet-react` v4.6.0 (WalletConnect v2, supports Pera/Defly/Lute/Kibisis/Biatec/Exodus/Web3Auth)
+11. **Build verified** — `npx next build` passes clean with all changes
 
 ---
 
