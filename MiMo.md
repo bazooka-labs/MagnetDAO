@@ -137,6 +137,72 @@ MagnetDAO/
 
 ---
 
+## Code Review — Stack vs. Architecture Audit
+
+> Reviewed by Claude Sonnet 4.6 on 2026-05-02
+
+### Smart Contracts — Critical Issues
+
+**1. Broken imports (both contracts won't compile)**
+`governance.py` uses `App`, `BoxCreate`, `BoxReplace`, `ScratchVar`, `Cond`, `InnerTxnBuilder` — none are imported. `treasury.py` has the same problem with `InnerTxnBuilder`, `InnerTxnField`, `TxnType`, `BoxCreate`, `BoxReplace`, `App`. Both contracts fail at compile time as written.
+
+**2. Vote weight is hardcoded to 1 — the core mechanic is broken**
+`cast_vote` stores `Int(1)` for every voter regardless of Magnet balance. The comment acknowledges it: *"simplified weight."* This means a wallet with 1 Magnet votes equal to a wallet with 100,000. The 1-token-1-vote system is the foundation of the DAO and isn't actually implemented.
+
+**3. No double-vote prevention**
+`cast_vote` creates a box but never checks if that box already exists first. A voter can call it repeatedly on the same proposal.
+
+**4. No vote tallying**
+Individual votes are stored but there's no on-chain tally. `finalize_proposal` lets the founder set any status without referencing actual vote counts — governance is effectively just founder control with no on-chain accountability.
+
+**5. Treasury doesn't verify proposal approval before deploying funds**
+`execute_deployment` releases funds without cross-checking the governance contract to confirm the proposal has `STATUS_APPROVED`. A founder could deploy against any proposal regardless of vote outcome.
+
+**6. `deploy.py` ignores its own `--deploy` flag**
+`args.deploy` is parsed but never checked in `main()`. The contracts always deploy.
+
+---
+
+### Smart Contracts — Architecture Concerns
+
+**7. PyTeal is the legacy framework**
+This is a new project — the current AlgoKit standard is Algorand Python (PuyaPy). PyTeal requires deeply nested `Concat` calls (visible in the proposal data encoding — 7 levels deep), lacks type safety, and is harder to audit. PuyaPy compiles to the same AVM bytecode but is far more readable and maintainable. Worth migrating before testnet deployment.
+
+**8. Fee accrual model doesn't match how Algorand DEXes work**
+The treasury has a `receive_fees` function expecting swap fees to be sent back to it. In practice, AMM fees on Algorand DEXes (Tinyman, Pact) accrue to LP position holders when they remove liquidity — they don't flow to a separate address. The current model assumes a fee routing mechanism that doesn't exist. This needs a design rethink: either Magnet holders are LPs directly and collect fees through the DEX, or the treasury holds LP tokens and harvests fees on withdrawal.
+
+---
+
+### Web App — Issues
+
+**9. Next.js 14.2.18 has a known security vulnerability**
+Flagged in MiMo's own todo list. Should be on 14.2.29+ or migrated to Next.js 15.
+
+**10. Pera Wallet v1 / WalletConnect v1 is deprecated**
+`@perawallet/connect` v1.3.3 uses WalletConnect v1 which was sunset. The current standard for Algorand dApps is `@txnlab/use-wallet` which supports Pera, Defly, Lute, and WalletConnect v2 out of the box. Replacing `useWallet.tsx` now is much easier than after the UI is wired up.
+
+**11. No app IDs — nothing is wired to chain**
+`constants.ts` has no governance or treasury app IDs. Until contracts are deployed to testnet and IDs are added here, the entire frontend is running on mock data. This is the #1 blocker for everything in the high-priority list above.
+
+---
+
+### Priority Order to Fix
+
+| # | Issue | Priority |
+|---|---|---|
+| 1 | Fix contract imports so they compile | Blocker |
+| 2 | Implement real Magnet balance check in `cast_vote` | Blocker |
+| 3 | Add double-vote prevention in `cast_vote` | Blocker |
+| 4 | Add vote tallying + connect finalize to tally | High |
+| 5 | Treasury verifies proposal status before deploy | High |
+| 6 | Fix `--deploy` flag in `deploy.py` | High |
+| 7 | Upgrade Next.js + migrate to `use-wallet` | High |
+| 8 | Deploy to testnet → populate app IDs | High |
+| 9 | Rethink fee accrual model | Medium |
+| 10 | Consider migrating contracts to PuyaPy | Medium |
+
+---
+
 ## Environment
 
 - **Model**: openrouter/xiaomi/mimo-v2-pro (MiMo)
