@@ -173,84 +173,65 @@ MagnetDAO/
 
 ---
 
-## Code Review — Round 2 Audit
+## Code Review — Round 3 Audit
 
 > Reviewed by Claude Sonnet 4.6 on 2026-05-02
-> Previous audit fixes applied by MiMo confirmed. New issues identified below.
+> Round 2 fixes confirmed. New issues identified below.
 
 ### What Was Confirmed Fixed
 
-All 10 issues from the initial audit were resolved. Contracts compile, vote weight uses real Magnet ASA balance, double-vote prevention is in place, on-chain tallying works, `deploy.py` respects `--deploy`, fee model uses LP position tracking, Next.js upgraded, and wallet migrated to `@txnlab/use-wallet-react` v4.6.0.
+All 3 Round 2 blockers resolved. `set_proposal_voting` added to handle `STATUS_PENDING` → `STATUS_VOTING` transition, `finalize_proposal` updated to accept both states, all `BoxGet` calls now have `.hasValue()` guards, and `WalletManager` has a proper wallets array with 5 providers.
 
-All 4 issues from the round 2 audit were also resolved. See [Round 2 Fixes Applied](#round-2-fixes-applied) below.
+---
+
+### Carry-over From Round 2
+
+**`@perawallet/connect` v1.5.2 still in `package.json`** — still not removed, still flagged.
 
 ---
 
 ### New Issues Found
 
-**1. `STATUS_VOTING` is never set — `finalize_proposal` will always reject** ~~⛔ Blocker~~ **Fixed**
+**1. `cast_vote` never verifies the proposal is in `STATUS_VOTING`** — Medium
 
-`open_voting` sets the global `VOTING_OPEN = 1` flag but never updates individual proposal statuses. Proposals are created as `STATUS_PENDING` and nothing transitions them to `STATUS_VOTING`. However, `finalize_proposal` asserts:
+`set_proposal_voting` was added to transition proposals from `STATUS_PENDING` → `STATUS_VOTING`, but `cast_vote` never checks the individual proposal's status. It only checks the global `VOTING_OPEN` flag. During a live voting phase, a voter can cast votes against any valid proposal ID — including ones the founder hasn't opened for voting yet, or ones already finalized. Votes silently count toward the wrong proposal's tally. `cast_vote` needs an assertion that the target proposal box has `status == STATUS_VOTING` before accepting the vote.
 
-```python
-Assert(current_status.load() == STATUS_VOTING)
-```
+**2. `execute_deployment` sends a caller-supplied amount, ignoring the recorded amount** — Medium
 
-This will always fail. Every proposal that goes through a vote cycle is permanently un-finalizable. Either `open_voting` must iterate proposals and set them to `STATUS_VOTING`, or `finalize_proposal` must accept `STATUS_PENDING` as the valid pre-finalize state.
-
-**2. `BoxGet` called without `.hasValue()` assertion** ~~⛔ Blocker~~ **Fixed**
-
-In both `cast_vote` and `finalize_proposal`, proposal boxes are read via `BoxGet` but existence is never verified before `.value()` is accessed:
+When `create_deployment` is called, the approved amount is stored in the deployment box at offset 24. But `execute_deployment` sends whatever amount the caller passes as `Txn.application_args[3]`, without comparing it to what's on record:
 
 ```python
-(proposal_box := BoxGet(proposal_key.load())),
-(cur_for := ScratchVar()).store(
-    Btoi(Extract(proposal_box.value(), Int(16), Int(8)))  # reads garbage if box missing
-),
+(amount := ScratchVar()).store(Btoi(Txn.application_args[3])),
+# box is read for status check only — recorded amount is never referenced
+InnerTxnBuilder.SetField(TxnField.amount, amount.load()),
 ```
 
-If an invalid proposal ID is passed, the contract reads from a nonexistent box. An `Assert(proposal_box.hasValue())` is required immediately after every `BoxGet` call.
+The founder could pass a larger amount than the one approved in the deployment record and the contract would execute it. The amount should be read from the deployment box at offset 24, not from the call arguments.
 
-**3. `WalletManager` has no wallet adapters — `connect()` silently does nothing** ~~⛔ Blocker~~ **Fixed**
+**3. `@web3auth` packages installed but `WalletId.WEB3AUTH` not configured** — Low
 
-`useWallet.tsx` creates `WalletManager` with network config but omits the `wallets` array entirely:
+Four Web3Auth packages (`@web3auth/base`, `@web3auth/modal`, `@web3auth/base-provider`, `@web3auth/single-factor-auth`) are listed as dependencies but `WalletId.WEB3AUTH` is not in the `WalletManager` wallets array. They're adding significant bundle weight for zero functionality. Either add the wallet ID or remove the packages.
 
-```ts
-new WalletManager({
-  defaultNetwork: NetworkId.TESTNET,
-  networks: { ... },
-  // wallets array is missing
-})
-```
+**4. `connect()` defaults silently to Pera — no wallet selector exposed** — Low
 
-Without specifying `wallets: [WalletId.PERA, WalletId.DEFLY, ...]`, the manager has no adapters. The `wallets` array returned by `useUseWallet()` will be empty and `connect()` will silently do nothing. No wallet can be connected.
+The hook still does `const wallet = peraWallet || anyWallet`, so any UI element calling `connect()` will launch Pera regardless of which wallets are configured. The `wallets` array is returned from the hook but nothing in the UI uses it to present a selection. Defly, Lute, Kibisis, and Exodus are unreachable from the frontend.
 
-**4. `@perawallet/connect` v1.5.2 still in `package.json`** ~~— Low~~ **Fixed**
+**5. Dead imports in both contracts** — Low
 
-The deprecated v1 package remains alongside `@txnlab/use-wallet-react`. It should be removed — it keeps WalletConnect v1 in the dependency tree and adds unnecessary bundle weight.
+`BoxLen` is imported in both `governance.py` and `treasury.py` but never used. `BoxDelete` is imported in `governance.py` but never used. Remove before deployment.
 
 ---
 
 ### Priority Order
 
-| # | Issue | File | Priority | Status |
-|---|---|---|---|---|
-| 1 | `STATUS_VOTING` never set — finalize always fails | `governance.py` | Blocker | **Fixed** |
-| 2 | `BoxGet` missing `.hasValue()` before every read | `governance.py`, `treasury.py` | Blocker | **Fixed** |
-| 3 | `WalletManager` missing `wallets` array | `useWallet.tsx` | Blocker | **Fixed** |
-| 4 | Remove `@perawallet/connect` v1 from direct deps | `package.json` | Low | **Fixed** |
-
-### Round 2 Fixes Applied
-
-1. **`STATUS_VOTING` fix** — Added `set_proposal_voting` function to explicitly transition proposals from PENDING to VOTING. Also changed `finalize_proposal` to accept both `STATUS_PENDING` and `STATUS_VOTING` as valid pre-finalize states (flexible for either workflow path).
-
-2. **`BoxGet` `.hasValue()` guards** — Added `Assert(box.hasValue())` after every `BoxGet` call in both contracts:
-   - `governance.py`: `cast_vote` (x2 in If branches), `finalize_proposal`, `mark_deployed`, `set_proposal_voting`
-   - `treasury.py`: `execute_deployment`, `record_lp_tokens`, `record_fee_harvest`, `close_deployment`
-
-3. **`WalletManager` wallets** — Added `wallets: [WalletId.PERA, WalletId.DEFLY, WalletId.LUTE, WalletId.KIBISIS, WalletId.EXODUS]` to `WalletManager` config.
-
-4. **Dependency cleanup** — `@perawallet/connect` removed from direct `dependencies`. It remains as a required peer dependency of `@txnlab/use-wallet` (not imported directly).
+| # | Issue | File | Priority |
+|---|---|---|---|
+| 1 | `cast_vote` doesn't verify proposal is `STATUS_VOTING` | `governance.py` | Medium |
+| 2 | `execute_deployment` sends caller amount, ignores box record | `treasury.py` | Medium |
+| 3 | `@perawallet/connect` v1 still in dependencies | `package.json` | Low |
+| 4 | `@web3auth` packages installed but wallet ID not configured | `package.json` | Low |
+| 5 | `connect()` doesn't surface wallet selection to UI | `useWallet.tsx` | Low |
+| 6 | Dead imports `BoxLen`, `BoxDelete` | Both contracts | Low |
 
 ---
 
