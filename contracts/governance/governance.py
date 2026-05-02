@@ -313,6 +313,8 @@ def approval_program():
                 )
             )
         ),
+        (proposal_box := BoxGet(proposal_key.load())),
+        Assert(proposal_box.hasValue()),
         (new_status := ScratchVar()).store(Btoi(Txn.application_args[2])),
         Assert(Or(new_status.load() == STATUS_APPROVED, new_status.load() == STATUS_REJECTED)),
         BoxReplace(proposal_key.load(), Int(0), Itob(new_status.load())),

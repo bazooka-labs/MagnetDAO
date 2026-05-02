@@ -52,11 +52,6 @@ export function useWallet() {
 
   const isConnecting = wallets?.some((w: Wallet) => w.isActive && !w.isConnected);
 
-  const peraWallet = wallets?.find(
-    (w: Wallet) => w.id === WalletId.PERA
-  );
-  const anyWallet = wallets?.[0];
-
   return {
     address: activeAddress ?? null,
     isConnected: !!activeAccount,
@@ -64,9 +59,10 @@ export function useWallet() {
     isReady,
     activeAccount,
     wallets,
-    peraWallet,
-    connect: async () => {
-      const wallet = peraWallet || anyWallet;
+    connect: async (walletId?: WalletId) => {
+      const wallet = walletId
+        ? wallets?.find((w: Wallet) => w.id === walletId)
+        : wallets?.[0];
       if (wallet) {
         await wallet.connect();
       }
