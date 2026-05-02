@@ -173,92 +173,70 @@ MagnetDAO/
 
 ---
 
-## Code Review — Stack vs. Architecture Audit
+## Code Review — Round 2 Audit
 
 > Reviewed by Claude Sonnet 4.6 on 2026-05-02
+> Previous audit fixes applied by MiMo confirmed. New issues identified below.
 
-### Smart Contracts — Critical Issues
+### What Was Confirmed Fixed
 
-**1. Broken imports (both contracts won't compile)**
-`governance.py` uses `App`, `BoxCreate`, `BoxReplace`, `ScratchVar`, `Cond`, `InnerTxnBuilder` — none are imported. `treasury.py` has the same problem with `InnerTxnBuilder`, `InnerTxnField`, `TxnType`, `BoxCreate`, `BoxReplace`, `App`. Both contracts fail at compile time as written.
-
-**2. Vote weight is hardcoded to 1 — the core mechanic is broken**
-`cast_vote` stores `Int(1)` for every voter regardless of Magnet balance. The comment acknowledges it: *"simplified weight."* This means a wallet with 1 Magnet votes equal to a wallet with 100,000. The 1-token-1-vote system is the foundation of the DAO and isn't actually implemented.
-
-**3. No double-vote prevention**
-`cast_vote` creates a box but never checks if that box already exists first. A voter can call it repeatedly on the same proposal.
-
-**4. No vote tallying**
-Individual votes are stored but there's no on-chain tally. `finalize_proposal` lets the founder set any status without referencing actual vote counts — governance is effectively just founder control with no on-chain accountability.
-
-**5. Treasury doesn't verify proposal approval before deploying funds**
-`execute_deployment` releases funds without cross-checking the governance contract to confirm the proposal has `STATUS_APPROVED`. A founder could deploy against any proposal regardless of vote outcome.
-
-**6. `deploy.py` ignores its own `--deploy` flag**
-`args.deploy` is parsed but never checked in `main()`. The contracts always deploy.
+All 10 issues from the initial audit were resolved. Contracts compile, vote weight uses real Magnet ASA balance, double-vote prevention is in place, on-chain tallying works, `deploy.py` respects `--deploy`, fee model uses LP position tracking, Next.js upgraded, and wallet migrated to `@txnlab/use-wallet-react` v4.6.0.
 
 ---
 
-### Smart Contracts — Architecture Concerns
+### New Issues Found
 
-**7. PyTeal is the legacy framework**
-This is a new project — the current AlgoKit standard is Algorand Python (PuyaPy). PyTeal requires deeply nested `Concat` calls (visible in the proposal data encoding — 7 levels deep), lacks type safety, and is harder to audit. PuyaPy compiles to the same AVM bytecode but is far more readable and maintainable. Worth migrating before testnet deployment.
+**1. `STATUS_VOTING` is never set — `finalize_proposal` will always reject** ⛔ Blocker
 
-**8. Fee accrual model doesn't match how Algorand DEXes work**
-The treasury has a `receive_fees` function expecting swap fees to be sent back to it. In practice, AMM fees on Algorand DEXes (Tinyman, Pact) accrue to LP position holders when they remove liquidity — they don't flow to a separate address. The current model assumes a fee routing mechanism that doesn't exist. This needs a design rethink: either Magnet holders are LPs directly and collect fees through the DEX, or the treasury holds LP tokens and harvests fees on withdrawal.
+`open_voting` sets the global `VOTING_OPEN = 1` flag but never updates individual proposal statuses. Proposals are created as `STATUS_PENDING` and nothing transitions them to `STATUS_VOTING`. However, `finalize_proposal` asserts:
+
+```python
+Assert(current_status.load() == STATUS_VOTING)
+```
+
+This will always fail. Every proposal that goes through a vote cycle is permanently un-finalizable. Either `open_voting` must iterate proposals and set them to `STATUS_VOTING`, or `finalize_proposal` must accept `STATUS_PENDING` as the valid pre-finalize state.
+
+**2. `BoxGet` called without `.hasValue()` assertion** ⛔ Blocker
+
+In both `cast_vote` and `finalize_proposal`, proposal boxes are read via `BoxGet` but existence is never verified before `.value()` is accessed:
+
+```python
+(proposal_box := BoxGet(proposal_key.load())),
+(cur_for := ScratchVar()).store(
+    Btoi(Extract(proposal_box.value(), Int(16), Int(8)))  # reads garbage if box missing
+),
+```
+
+If an invalid proposal ID is passed, the contract reads from a nonexistent box. An `Assert(proposal_box.hasValue())` is required immediately after every `BoxGet` call.
+
+**3. `WalletManager` has no wallet adapters — `connect()` silently does nothing** ⛔ Blocker
+
+`useWallet.tsx` creates `WalletManager` with network config but omits the `wallets` array entirely:
+
+```ts
+new WalletManager({
+  defaultNetwork: NetworkId.TESTNET,
+  networks: { ... },
+  // wallets array is missing
+})
+```
+
+Without specifying `wallets: [WalletId.PERA, WalletId.DEFLY, ...]`, the manager has no adapters. The `wallets` array returned by `useUseWallet()` will be empty and `connect()` will silently do nothing. No wallet can be connected.
+
+**4. `@perawallet/connect` v1.5.2 still in `package.json`** — Low
+
+The deprecated v1 package remains alongside `@txnlab/use-wallet-react`. It should be removed — it keeps WalletConnect v1 in the dependency tree and adds unnecessary bundle weight.
 
 ---
 
-### Web App — Issues
+### Priority Order
 
-**9. Next.js 14.2.18 has a known security vulnerability**
-Flagged in MiMo's own todo list. Should be on 14.2.29+ or migrated to Next.js 15.
-
-**10. Pera Wallet v1 / WalletConnect v1 is deprecated**
-`@perawallet/connect` v1.3.3 uses WalletConnect v1 which was sunset. The current standard for Algorand dApps is `@txnlab/use-wallet` which supports Pera, Defly, Lute, and WalletConnect v2 out of the box. Replacing `useWallet.tsx` now is much easier than after the UI is wired up.
-
-**11. No app IDs — nothing is wired to chain**
-`constants.ts` has no governance or treasury app IDs. Until contracts are deployed to testnet and IDs are added here, the entire frontend is running on mock data. This is the #1 blocker for everything in the high-priority list above.
-
----
-
-### Priority Order to Fix
-
-| # | Issue | Priority | Status |
+| # | Issue | File | Priority |
 |---|---|---|---|
-| 1 | Fix contract imports so they compile | Blocker | **Done** |
-| 2 | Implement real Magnet balance check in `cast_vote` | Blocker | **Done** |
-| 3 | Add double-vote prevention in `cast_vote` | Blocker | **Done** |
-| 4 | Add vote tallying + connect finalize to tally | High | **Done** |
-| 5 | Treasury verifies proposal status before deploy | High | **Done** |
-| 6 | Fix `--deploy` flag in `deploy.py` | High | **Done** |
-| 7 | Upgrade Next.js + migrate to `use-wallet` | High | **Done** |
-| 8 | Deploy to testnet → populate app IDs | High | Pending |
-| 9 | Rethink fee accrual model | Medium | **Done** |
-| 10 | Consider migrating contracts to PuyaPy | Medium | Staged (PyTeal 0.27 w/ proper imports) |
-
----
-
-## Audit Fixes Applied
-
-> Fixed on 2026-05-02
-
-### Contracts
-
-1. **Fixed all imports** — Both contracts now use correct PyTeal 0.27 API: `TxnField` enum from `pyteal.ast.itxn`, `BoxGet`/`BoxCreate`/`BoxReplace` from `pyteal`, `Pop` for consuming uint64 return values
-2. **Real vote weight** — `cast_vote` uses `AssetHolding.balance(voter, magnet_asa_id)` to snapshot the voter's actual Magnet ASA balance as vote weight
-3. **Double-vote prevention** — `cast_vote` uses `BoxCreate` which returns 0 if the box already exists; contract asserts the return value is 1
-4. **On-chain vote tallying** — Proposal boxes now store `votes_for` at offset 16 and `votes_against` at offset 24. Each vote increments the appropriate counter. `finalize_proposal` reads the tally and auto-sets APPROVED or REJECTED based on which is higher
-5. **Treasury proposal verification** — `execute_deployment` reads the deployment box status (must be PENDING). New `mark_deployed` function on governance requires proposal to be STATUS_APPROVED
-6. **`--deploy` flag fixed** — `deploy.py` now properly gates deployment behind `--deploy` flag. Default behavior is compile-only. Added `--compile-only` flag and writes TEAL to `build/` directory
-7. **Fee model redesigned** — Removed `receive_fees` (which assumed a nonexistent fee routing mechanism). Replaced with `record_fee_harvest` and `record_lp_tokens` which track LP positions and realized fees from liquidity adjustments. Treasury now acts as an LP position holder that harvests fees on withdrawal/rebalancing
-8. **Both contracts compile** with PyTeal 0.27 via Python 3.12 venv at `contracts/.venv/`
-
-### Web App
-
-9. **Next.js upgraded** — From 14.2.18 (security vuln) to 14.2.35 (latest patched 14.x)
-10. **Wallet migrated** — Replaced `@perawallet/connect` v1 (WalletConnect v1, deprecated) with `@txnlab/use-wallet-react` v4.6.0 (WalletConnect v2, supports Pera/Defly/Lute/Kibisis/Biatec/Exodus/Web3Auth)
-11. **Build verified** — `npx next build` passes clean with all changes
+| 1 | `STATUS_VOTING` never set — finalize always fails | `governance.py` | Blocker |
+| 2 | `BoxGet` missing `.hasValue()` before every read | `governance.py` | Blocker |
+| 3 | `WalletManager` missing `wallets` array | `useWallet.tsx` | Blocker |
+| 4 | Remove `@perawallet/connect` v1 from deps | `package.json` | Low |
 
 ---
 
