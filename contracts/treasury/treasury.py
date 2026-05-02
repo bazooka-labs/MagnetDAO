@@ -14,7 +14,7 @@ from pyteal import (
     TealType, Cond, compileTeal, ScratchVar, Pop, Extract
 )
 from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace
-from pyteal import BoxGet, App, Balance
+from pyteal import BoxGet, App, Balance, Len
 from pyteal import TxnField
 
 # Global state keys
@@ -85,11 +85,15 @@ def approval_program():
     ])
 
     # --- create_deployment ---
-    # args: [1] proposal_id, [2] project_asa_id, [3] amount, [4] dex_name
+    # args: [1] proposal_id, [2] project_asa_id, [3] amount (8-byte uint64), [4] dex_name
     create_deployment = Seq([
         only_founder(),
         (amount := ScratchVar()).store(Btoi(Txn.application_args[3])),
         Assert(amount.load() <= (Balance(Global.current_application_address()) - MIN_BALANCE)),
+
+        # C1+C2: Validate field lengths
+        Assert(Len(Txn.application_args[3]) == Int(8)),    # amount must be 8-byte uint64
+        Assert(Len(Txn.application_args[4]) <= Int(64)),   # dex_name max 64 bytes
 
         App.globalPut(DEPLOYMENT_COUNT, App.globalGet(DEPLOYMENT_COUNT) + Int(1)),
 
@@ -172,7 +176,11 @@ def approval_program():
         ),
         Assert(deploy_status.load() == DEPLOY_ACTIVE),
 
-        BoxReplace(box_key.load(), Int(128), Itob(lp_amount.load())),
+        # C5: Accumulate LP tokens (not overwrite)
+        (current_lp := ScratchVar()).store(
+            Btoi(Extract(deploy_box.value(), Int(128), Int(8)))
+        ),
+        BoxReplace(box_key.load(), Int(128), Itob(current_lp.load() + lp_amount.load())),
         Approve(),
     ])
 

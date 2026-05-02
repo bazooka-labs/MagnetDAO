@@ -76,6 +76,40 @@ export default function ProposalsPage() {
   );
   const [showSubmit, setShowSubmit] = useState(false);
 
+  // W10: Form state
+  const [formName, setFormName] = useState("");
+  const [formPair, setFormPair] = useState("");
+  const [formCapital, setFormCapital] = useState("");
+  const [formTimeline, setFormTimeline] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formRisks, setFormRisks] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // W10: Submit handler
+  function handleSubmit() {
+    if (!formName || !formPair || !formCapital || !formTimeline) return;
+    setSubmitting(true);
+    // TODO: construct create_proposal group txn and submit via wallet
+    console.log("Proposal submitted:", {
+      name: formName,
+      pair: formPair,
+      capital: parseInt(formCapital),
+      timeline: parseInt(formTimeline),
+      description: formDescription,
+      risks: formRisks,
+    });
+    setTimeout(() => {
+      setSubmitting(false);
+      setShowSubmit(false);
+      setFormName("");
+      setFormPair("");
+      setFormCapital("");
+      setFormTimeline("");
+      setFormDescription("");
+      setFormRisks("");
+    }, 1000);
+  }
+
   const filteredProposals = MOCK_PROPOSALS.filter((p) => {
     if (filter === "active")
       return [ProposalStatus.PENDING, ProposalStatus.VOTING].includes(
@@ -138,6 +172,8 @@ export default function ProposalsPage() {
               <input
                 type="text"
                 placeholder="e.g. TinySwap"
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
               />
             </div>
@@ -148,6 +184,8 @@ export default function ProposalsPage() {
               <input
                 type="text"
                 placeholder="e.g. TINY/U"
+                value={formPair}
+                onChange={(e) => setFormPair(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
               />
             </div>
@@ -158,6 +196,8 @@ export default function ProposalsPage() {
               <input
                 type="number"
                 placeholder="50000"
+                value={formCapital}
+                onChange={(e) => setFormCapital(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
               />
             </div>
@@ -168,6 +208,8 @@ export default function ProposalsPage() {
               <input
                 type="number"
                 placeholder="90"
+                value={formTimeline}
+                onChange={(e) => setFormTimeline(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
               />
             </div>
@@ -178,6 +220,8 @@ export default function ProposalsPage() {
               <textarea
                 rows={3}
                 placeholder="Describe your project and how liquidity will improve market conditions..."
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
               />
             </div>
@@ -188,13 +232,19 @@ export default function ProposalsPage() {
               <textarea
                 rows={2}
                 placeholder="Honest assessment of risks..."
+                value={formRisks}
+                onChange={(e) => setFormRisks(e.target.value)}
                 className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
               />
             </div>
           </div>
           <div className="mt-6 flex gap-3">
-            <button className="rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-6 py-2 text-sm font-semibold text-white hover:from-magnet-500 hover:to-magnet-400 transition-all">
-              Submit Proposal
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !formName || !formPair || !formCapital}
+              className="rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-6 py-2 text-sm font-semibold text-white hover:from-magnet-500 hover:to-magnet-400 transition-all disabled:opacity-50"
+            >
+              {submitting ? "Submitting..." : "Submit Proposal"}
             </button>
             <button
               onClick={() => setShowSubmit(false)}
@@ -226,9 +276,19 @@ export default function ProposalsPage() {
 function ProposalCard({ proposal }: { proposal: Proposal }) {
   const { isConnected } = useWallet();
   const [expanded, setExpanded] = useState(false);
+  const [voting, setVoting] = useState(false);
   const totalVotes = proposal.votesFor + proposal.votesAgainst;
   const forPercent =
     totalVotes > 0 ? Math.round((proposal.votesFor / totalVotes) * 100) : 0;
+
+  // W11: Vote handler
+  function handleVote(direction: "for" | "against") {
+    if (voting) return;
+    setVoting(true);
+    // TODO: construct cast_vote group txn and submit via wallet
+    console.log(`Vote ${direction} on proposal ${proposal.id}`);
+    setTimeout(() => setVoting(false), 1000);
+  }
 
   return (
     <Card className="hover:border-gray-700/60 transition-colors cursor-pointer">
@@ -297,11 +357,19 @@ function ProposalCard({ proposal }: { proposal: Proposal }) {
 
           {proposal.status === ProposalStatus.VOTING && isConnected && (
             <div className="mt-6 flex gap-3">
-              <button className="rounded-lg bg-green-600/20 border border-green-600/30 px-6 py-2 text-sm font-semibold text-green-400 hover:bg-green-600/30 transition-all">
-                Vote For
+              <button
+                onClick={() => handleVote("for")}
+                disabled={voting}
+                className="rounded-lg bg-green-600/20 border border-green-600/30 px-6 py-2 text-sm font-semibold text-green-400 hover:bg-green-600/30 transition-all disabled:opacity-50"
+              >
+                {voting ? "Voting..." : "Vote For"}
               </button>
-              <button className="rounded-lg bg-red-600/20 border border-red-600/30 px-6 py-2 text-sm font-semibold text-red-400 hover:bg-red-600/30 transition-all">
-                Vote Against
+              <button
+                onClick={() => handleVote("against")}
+                disabled={voting}
+                className="rounded-lg bg-red-600/20 border border-red-600/30 px-6 py-2 text-sm font-semibold text-red-400 hover:bg-red-600/30 transition-all disabled:opacity-50"
+              >
+                {voting ? "Voting..." : "Vote Against"}
               </button>
             </div>
           )}

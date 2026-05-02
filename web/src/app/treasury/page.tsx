@@ -23,6 +23,7 @@ const MOCK_DEPLOYMENTS: Deployment[] = [
     deployer: "FOUNDERADDR123456789",
     status: DeploymentStatus.ACTIVE,
     timestamp: Date.now() - 86400000 * 10,
+    txId: "DEPLOYTXIDEXAMPLE123456789",
   },
 ];
 
@@ -132,7 +133,7 @@ export default function TreasuryPage() {
                 </div>
               </div>
               <a
-                href={`https://lora.algokit.io/testnet/transaction/`}
+                href={deployment.txId ? `https://lora.algokit.io/testnet/transaction/${deployment.txId}` : "#"}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs text-magnet-400 hover:text-magnet-300 transition-colors"

@@ -27,11 +27,16 @@ export async function getAppGlobalState(
 
   if (globalState && Array.isArray(globalState)) {
     for (const entry of globalState) {
-      const key = atob(entry.key);
+      const key = typeof atob !== "undefined"
+        ? atob(entry.key)
+        : Buffer.from(entry.key, "base64").toString();
       if (entry.value.type === 1) {
         state.set(key, BigInt(entry.value.uint));
       } else {
-        state.set(key, Uint8Array.from(atob(entry.value.bytes), (c) => c.charCodeAt(0)));
+        const bytes = typeof atob !== "undefined"
+          ? atob(entry.value.bytes)
+          : Buffer.from(entry.value.bytes, "base64").toString();
+        state.set(key, Uint8Array.from(bytes, (c) => c.charCodeAt(0)));
       }
     }
   }

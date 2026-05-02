@@ -299,23 +299,49 @@ If `isConnected` is true but `address` is null during a reconnect race, this thr
 
 ### Priority Summary
 
-| # | Area | Issue | Priority |
-|---|---|---|---|
-| 1 | Contracts | `BoxReplace` writes past allocated slot — data corruption | Medium |
-| 2 | Contracts | `capital_requested`/`timeline_days` encoding not enforced | Medium |
-| 3 | Types | `Vote` missing `direction` field | Medium |
-| 4 | Web | Proposal form has no state or submit handler | High |
-| 5 | Web | Vote buttons have no `onClick` | High |
-| 6 | Web | Lora link missing transaction ID | Medium |
-| 7 | Contracts | `cast_vote` double box read | Low |
-| 8 | Contracts | No deposit refund mechanism | Low |
-| 9 | Contracts | `record_lp_tokens` overwrites instead of accumulates | Low |
-| 10 | Contracts | `update_founder` no two-step safety | Low |
-| 11 | Types | `TreasuryState` missing `totalFeesHarvested` | Low |
-| 12 | Types | Duplicate ASA ID across two files | Low |
-| 13 | Web | `address!` non-null assertion | Low |
-| 14 | Web | `atob` browser-only in `algorand.ts` | Low |
-| 15 | Web | Landing page unnecessarily a client component | Low |
+| # | Area | Issue | Priority | Status |
+|---|---|---|---|---|
+| 1 | Contracts | `BoxReplace` writes past allocated slot — data corruption | Medium | **Fixed** |
+| 2 | Contracts | `capital_requested`/`timeline_days` encoding not enforced | Medium | **Fixed** |
+| 3 | Types | `Vote` missing `direction` field | Medium | **Fixed** |
+| 4 | Web | Proposal form has no state or submit handler | High | **Fixed** |
+| 5 | Web | Vote buttons have no `onClick` | High | **Fixed** |
+| 6 | Web | Lora link missing transaction ID | Medium | **Fixed** |
+| 7 | Contracts | `cast_vote` double box read | Low | **Fixed** |
+| 8 | Contracts | No deposit refund mechanism | Low | **Fixed** |
+| 9 | Contracts | `record_lp_tokens` overwrites instead of accumulates | Low | **Fixed** |
+| 10 | Contracts | `update_founder` no two-step safety | Low | **Fixed** |
+| 11 | Types | `TreasuryState` missing `totalFeesHarvested` | Low | **Fixed** |
+| 12 | Types | Duplicate ASA ID across two files | Low | **Fixed** |
+| 13 | Web | `address!` non-null assertion | Low | **Fixed** |
+| 14 | Web | `atob` browser-only in `algorand.ts` | Low | **Fixed** |
+| 15 | Web | Landing page unnecessarily a client component | Low | **Fixed** |
+
+### Deep Dive Audit Fixes Applied
+
+**Contracts:**
+
+1. **BoxReplace overflow guards** — Added `Assert(Len(arg) <= Int(MAX))` before all string field writes: `app_name` <= 64, `liquidity_pair` <= 64, `risk_hash` <= 48 (governance), `dex_name` <= 64 (treasury)
+2. **uint64 encoding enforcement** — Added `Assert(Len(arg) == Int(8))` for `capital_requested`, `timeline_days` (governance) and `amount` (treasury)
+3. **Double box read eliminated** — `cast_vote` now reads proposal box once at the top, reuses for status check AND tally update
+4. **Deposit refund** — Added `refund_proposal_deposit` function: founder can refund 1 Algo to submitter for REJECTED/APPROVED/DEPLOYED proposals
+5. **LP accumulation** — `record_lp_tokens` now reads existing value and adds to it (like `record_fee_harvest`)
+6. **Two-step founder transfer** — `update_founder` now writes to `PENDING_FOUNDER`. New `accept_founder` function requires the new address to confirm. Both added to router
+
+**Types:**
+
+7. **Vote.direction** — Added `direction: boolean` to `Vote` interface
+8. **TreasuryState.totalFeesHarvested** — Added field
+9. **Deduplicated ASA ID** — `MAGNET_DAO_CONFIG.magnetAsaId` now imports from `MAGNET_TOKEN.asaId`
+
+**Web:**
+
+10. **Proposal form wired** — Added `useState` for all 6 fields + `handleSubmit` with validation and loading state
+11. **Vote buttons wired** — Added `handleVote(direction)` with loading state to `ProposalCard`
+12. **Lora link fixed** — Added `txId` to `Deployment` type and mock data, link now includes `${deployment.txId}`
+13. **address! replaced** — `address ?? ""` in Navbar
+14. **atob made cross-env** — `typeof atob !== "undefined" ? atob(s) : Buffer.from(s, "base64").toString()`
+15. **Landing page SSR** — Extracted `HeroCTA` client component, rest of page is now server-rendered (First Load JS: 1.08 kB, down from 3.38 kB)
 
 ---
 

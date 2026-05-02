@@ -1,3 +1,5 @@
+import { MAGNET_TOKEN } from "@/lib/constants";
+
 export interface Proposal {
   id: number;
   quarter: number;
@@ -30,6 +32,7 @@ export interface Deployment {
   deployer: string;
   status: DeploymentStatus;
   timestamp: number;
+  txId?: string;
 }
 
 export enum DeploymentStatus {
@@ -43,6 +46,7 @@ export interface Vote {
   proposalId: number;
   quarter: number;
   weight: number;
+  direction: boolean; // true = for, false = against
 }
 
 export interface TreasuryState {
@@ -50,6 +54,7 @@ export interface TreasuryState {
   totalDeployed: number;
   balance: number;
   deploymentCount: number;
+  totalFeesHarvested: number;
 }
 
 export interface GovernanceState {
@@ -70,7 +75,7 @@ export interface DaoConfig {
 export const MAGNET_DAO_CONFIG: DaoConfig = {
   governanceAppId: 0,
   treasuryAppId: 0,
-  magnetAsaId: 3081853135,
+  magnetAsaId: MAGNET_TOKEN.asaId,
   network: "testnet",
 };
 

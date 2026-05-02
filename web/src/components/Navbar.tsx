@@ -70,7 +70,7 @@ export function Navbar() {
             {isConnected ? (
               <div className="flex items-center gap-3">
                 <span className="hidden sm:inline-block rounded-full bg-surface-lighter px-3 py-1.5 text-xs font-mono text-magnet-400">
-                  {truncateAddress(address!)}
+                  {truncateAddress(address ?? "")}
                 </span>
                 <button
                   onClick={disconnect}

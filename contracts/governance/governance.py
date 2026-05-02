@@ -15,7 +15,8 @@ from pyteal import (
     TealType, Cond, compileTeal, ScratchVar, Pop, Extract
 )
 from pyteal import InnerTxnBuilder, TxnType, BoxCreate, BoxReplace
-from pyteal import BoxGet, App, AssetHolding
+from pyteal import BoxGet, App, AssetHolding, Len
+from pyteal.ast.itxn import TxnField
 
 # Global state keys
 FOUNDERS_ADDRESS = Bytes("founder")
@@ -26,6 +27,7 @@ PROPOSAL_COUNT = Bytes("p_count")
 VOTING_OPEN = Bytes("vote_open")
 QUARTER_SECONDS = Bytes("q_secs")
 TOTAL_VOTES_CAST = Bytes("total_votes")
+PENDING_FOUNDER = Bytes("pending_founder")
 
 # Box name prefixes
 PROPOSAL_PREFIX = Bytes("p:")
@@ -78,6 +80,7 @@ def approval_program():
         App.globalPut(VOTING_OPEN, Int(0)),
         App.globalPut(QUARTER_SECONDS, DEFAULT_QUARTER_SECONDS),
         App.globalPut(TOTAL_VOTES_CAST, Int(0)),
+        App.globalPut(PENDING_FOUNDER, Bytes("")),
         Approve(),
     ])
 
@@ -85,13 +88,20 @@ def approval_program():
 
     # --- create_proposal ---
     # Group: [0] app call create_proposal, [1] payment 1 Algo deposit
-    # args: [1] app_name, [2] liquidity_pair, [3] capital_requested, [4] timeline_days, [5] risk_hash
+    # args: [1] app_name, [2] liquidity_pair, [3] capital_requested (8-byte uint64), [4] timeline_days (8-byte uint64), [5] risk_hash
     create_proposal = Seq([
         Assert(App.globalGet(VOTING_OPEN) == Int(0)),
         Assert(Global.group_size() >= Int(2)),
         Assert(Gtxn[1].type_enum() == TxnType.Payment),
         Assert(Gtxn[1].amount() >= Int(1000000)),
         Assert(Gtxn[1].receiver() == Global.current_application_address()),
+
+        # C1+C2: Validate field lengths before writing
+        Assert(Len(Txn.application_args[1]) <= Int(64)),   # app_name max 64 bytes
+        Assert(Len(Txn.application_args[2]) <= Int(64)),   # liquidity_pair max 64 bytes
+        Assert(Len(Txn.application_args[3]) == Int(8)),    # capital_requested must be 8-byte uint64
+        Assert(Len(Txn.application_args[4]) == Int(8)),    # timeline_days must be 8-byte uint64
+        Assert(Len(Txn.application_args[5]) <= Int(48)),   # risk_hash max 48 bytes
 
         App.globalPut(PROPOSAL_COUNT, App.globalGet(PROPOSAL_COUNT) + Int(1)),
 
@@ -162,7 +172,7 @@ def approval_program():
         # Voting must be open globally
         Assert(App.globalGet(VOTING_OPEN) == Int(1)),
 
-        # Verify target proposal is in STATUS_VOTING
+        # C3: Read target proposal box once — reused for status check and tally update
         (target_proposal_key := ScratchVar()).store(
             Concat(
                 PROPOSAL_PREFIX,
@@ -172,9 +182,10 @@ def approval_program():
                 )
             )
         ),
-        (target_box := BoxGet(target_proposal_key.load())),
-        Assert(target_box.hasValue()),
-        Assert(Btoi(Extract(target_box.value(), Int(0), Int(8))) == STATUS_VOTING),
+        (proposal_box := BoxGet(target_proposal_key.load())),
+        Assert(proposal_box.hasValue()),
+        # Verify STATUS_VOTING
+        Assert(Btoi(Extract(proposal_box.value(), Int(0), Int(8))) == STATUS_VOTING),
 
         # Build vote box key: "v:" + itob(quarter) + itob(proposal_id) + voter
         (vote_key := ScratchVar()).store(
@@ -208,37 +219,20 @@ def approval_program():
         BoxReplace(vote_key.load(), Int(0), Itob(magnet_balance.value())),
         BoxReplace(vote_key.load(), Int(8), Txn.application_args[2]),
 
-        # Update proposal tally
-        (proposal_key := ScratchVar()).store(
-            Concat(
-                PROPOSAL_PREFIX,
-                Concat(
-                    Itob(App.globalGet(CURRENT_QUARTER)),
-                    Txn.application_args[1]
-                )
-            )
-        ),
-
-        # Read and update the correct counter
+        # C3: Update tally using already-read proposal_box (no second BoxGet)
         If(Btoi(Txn.application_args[2]) == Int(1))
-        .Then(Seq([
-            # Vote FOR
-            (proposal_box := BoxGet(proposal_key.load())),
-            Assert(proposal_box.hasValue()),
+        .Then(
             (cur_for := ScratchVar()).store(
                 Btoi(Extract(proposal_box.value(), Int(16), Int(8)))
             ),
-            BoxReplace(proposal_key.load(), Int(16), Itob(cur_for.load() + magnet_balance.value()))
-        ]))
-        .Else(Seq([
-            # Vote AGAINST
-            (proposal_box := BoxGet(proposal_key.load())),
-            Assert(proposal_box.hasValue()),
+            BoxReplace(target_proposal_key.load(), Int(16), Itob(cur_for.load() + magnet_balance.value()))
+        )
+        .Else(
             (cur_against := ScratchVar()).store(
                 Btoi(Extract(proposal_box.value(), Int(24), Int(8)))
             ),
-            BoxReplace(proposal_key.load(), Int(24), Itob(cur_against.load() + magnet_balance.value()))
-        ])),
+            BoxReplace(target_proposal_key.load(), Int(24), Itob(cur_against.load() + magnet_balance.value()))
+        ),
 
         App.globalPut(TOTAL_VOTES_CAST, App.globalGet(TOTAL_VOTES_CAST) + Int(1)),
 
@@ -356,9 +350,58 @@ def approval_program():
     ])
 
     # --- update_founder ---
+    # C6: Two-step founder transfer — propose new address
     update_founder = Seq([
         only_founder(),
-        App.globalPut(FOUNDERS_ADDRESS, Txn.application_args[1]),
+        App.globalPut(PENDING_FOUNDER, Txn.application_args[1]),
+        Approve(),
+    ])
+
+    # --- accept_founder ---
+    # C6: New founder must accept to complete transfer
+    accept_founder = Seq([
+        Assert(Txn.sender() == App.globalGet(PENDING_FOUNDER)),
+        App.globalPut(FOUNDERS_ADDRESS, App.globalGet(PENDING_FOUNDER)),
+        App.globalPut(PENDING_FOUNDER, Bytes("")),
+        Approve(),
+    ])
+
+    # --- refund_proposal_deposit ---
+    # C4: Refund 1 Algo deposit for rejected or finalized proposals
+    # args: [1] proposal_id (bytes uint64)
+    refund_proposal_deposit = Seq([
+        only_founder(),
+        (proposal_key := ScratchVar()).store(
+            Concat(
+                PROPOSAL_PREFIX,
+                Concat(
+                    Itob(App.globalGet(CURRENT_QUARTER)),
+                    Txn.application_args[1]
+                )
+            )
+        ),
+        (proposal_box := BoxGet(proposal_key.load())),
+        Assert(proposal_box.hasValue()),
+        # Can only refund if proposal is in a terminal state
+        (p_status := ScratchVar()).store(
+            Btoi(Extract(proposal_box.value(), Int(0), Int(8)))
+        ),
+        Assert(Or(
+            p_status.load() == STATUS_REJECTED,
+            p_status.load() == STATUS_APPROVED,
+            p_status.load() == STATUS_DEPLOYED
+        )),
+        # Read submitter address at offset 32
+        (submitter := ScratchVar()).store(
+            Extract(proposal_box.value(), Int(32), Int(32))
+        ),
+        # Refund 1 Algo to submitter
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetField(TxnField.type_enum, TxnType.Payment),
+        InnerTxnBuilder.SetField(TxnField.receiver, submitter.load()),
+        InnerTxnBuilder.SetField(TxnField.amount, Int(1000000)),
+        InnerTxnBuilder.SetField(TxnField.fee, Int(0)),
+        InnerTxnBuilder.Submit(),
         Approve(),
     ])
 
@@ -378,6 +421,8 @@ def approval_program():
              [Txn.application_args[0] == Bytes("mark_deployed"), mark_deployed],
              [Txn.application_args[0] == Bytes("advance_quarter"), advance_quarter],
              [Txn.application_args[0] == Bytes("update_founder"), update_founder],
+             [Txn.application_args[0] == Bytes("accept_founder"), accept_founder],
+             [Txn.application_args[0] == Bytes("refund_deposit"), refund_proposal_deposit],
          )],
         [Int(1), Reject()],
     )
