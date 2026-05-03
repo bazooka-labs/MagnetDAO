@@ -7,16 +7,21 @@ const TREASURY_WALLET = ""; // TODO: set treasury wallet address
 
 async function fetchTVL(): Promise<string> {
   try {
+    // total_lockup = Magnet tokens locked across all pools
+    // price = ALGO per Magnet token
+    // TVL (both sides, confidence-adjusted) = total_lockup × price × 2 × confidence
     const res = await fetch(
-      `https://free-api.vestige.fi/asset/${MAGNET_ASA_ID}/tvl?currency=usd&period=1D`,
+      `https://api.vestigelabs.org/assets/price?asset_ids=${MAGNET_ASA_ID}&network_id=0`,
       { next: { revalidate: 3600 } }
     );
     if (!res.ok) return "—";
     const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return "—";
-    const latest = data[data.length - 1];
-    const value = Number(latest.value ?? latest.tvl ?? 0);
-    return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+    const entry = Array.isArray(data) ? data[0] : null;
+    if (!entry || !entry.total_lockup) return "—";
+    const tvl = Math.round(
+      Number(entry.total_lockup) * Number(entry.price) * 2 * Number(entry.confidence)
+    );
+    return `${tvl.toLocaleString("en-US")} ALGO`;
   } catch {
     return "—";
   }
@@ -73,7 +78,7 @@ async function StatsContent() {
     {
       label: "Total TVL",
       value: tvl,
-      sublabel: "$U across all pools",
+      sublabel: "$U pools via Vestige",
       icon: <TrendingUp className="h-4 w-4" />,
     },
     {
