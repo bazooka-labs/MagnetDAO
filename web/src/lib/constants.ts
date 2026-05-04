@@ -17,3 +17,26 @@ export const MAGNET_TOKEN = {
 } as const;
 
 export const QUARTER_SECONDS = 7_776_000; // 90 days
+
+// Founder/treasury wallet — set once wallet is designated.
+// Used for: founder-only UI gating, application fee destination.
+export const FOUNDER_ADDRESS = "";
+
+// Destination for liquidity application fee transactions.
+// Defaults to FOUNDER_ADDRESS; can be a separate inbox address if preferred.
+export const APPLICATION_ADDRESS = FOUNDER_ADDRESS;
+
+// Submission fee in microALGO (0 = applicant pays only the 0.001 ALGO network fee).
+// Raise this constant if spam becomes an issue — no contract change required.
+export const APPLICATION_FEE = 0;
+
+export const APPLICATION_NOTE_PREFIX = "magnet-apply:v1:";
+
+// Application cards are visible for this many months after submission.
+export const APPLICATION_WINDOW_MONTHS = 6;
+
+// Deployed voting.py app ID — set after testnet/mainnet deployment.
+export const VOTING_APP_ID = 0;
+
+// Vote window duration matching the voting.py contract constant.
+export const VOTE_DURATION_SECONDS = 604_800; // 7 days

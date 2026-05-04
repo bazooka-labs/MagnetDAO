@@ -1,5 +1,31 @@
 import { MAGNET_TOKEN } from "@/lib/constants";
 
+export interface LiquidityApplication {
+  txId: string;
+  submitter: string;
+  submittedAt: number;
+  name: string;
+  asaTitle: string;
+  asaId: number;
+  description: string;
+  contact: string;
+}
+
+export interface VotingProposal {
+  id: number;
+  question: string;
+  choices: string[];   // 2–4 non-empty strings
+  votes: number[];     // parallel to choices, total Magnet weight per choice
+  startTime: number;
+  endTime: number;
+}
+
+export interface VoterRecord {
+  proposalId: number;
+  choice: number;
+  lockedAmount: number;
+}
+
 export interface Proposal {
   id: number;
   quarter: number;

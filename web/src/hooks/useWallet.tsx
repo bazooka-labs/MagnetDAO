@@ -45,20 +45,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 export function useWallet() {
   const {
     activeAccount,
+    activeAddress,
     wallets,
     isReady,
-    activeAddress,
+    signTransactions,
+    algodClient,
   } = useUseWallet();
 
   const isConnecting = wallets?.some((w: Wallet) => w.isActive && !w.isConnected);
 
   return {
     address: activeAddress ?? null,
+    activeAddress: activeAddress ?? null,
     isConnected: !!activeAccount,
     isConnecting: !!isConnecting,
     isReady,
     activeAccount,
     wallets,
+    signTransactions,
+    algodClient,
     connect: async (walletId?: WalletId) => {
       const wallet = walletId
         ? wallets?.find((w: Wallet) => w.id === walletId)

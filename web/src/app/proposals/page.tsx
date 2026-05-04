@@ -1,380 +1,371 @@
 "use client";
 
-import { useState } from "react";
-import { Card, SectionHeader, StatusBadge, EmptyState } from "@/components/ui";
+import { useState, useEffect, useCallback } from "react";
+import { FileText, Vote, ChevronRight } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
+import { ApplyModal } from "@/components/ApplyModal";
+import { ApplicationCard } from "@/components/ApplicationCard";
+import { CreateProposalModal } from "@/components/CreateProposalModal";
+import { VotingProposalCard } from "@/components/VotingProposalCard";
 import {
-  type Proposal,
-  ProposalStatus,
-  PROPOSAL_STATUSES,
-} from "@/types/dao";
-import { ArrowUpRight, Calendar, DollarSign, Users } from "lucide-react";
+  APPLICATION_ADDRESS,
+  APPLICATION_NOTE_PREFIX,
+  APPLICATION_WINDOW_MONTHS,
+  FOUNDER_ADDRESS,
+  VOTING_APP_ID,
+  INDEXER_URLS,
+} from "@/lib/constants";
+import type { LiquidityApplication, VotingProposal, VoterRecord } from "@/types/dao";
+import algosdk from "algosdk";
 
-const MOCK_PROPOSALS: Proposal[] = [
-  {
-    id: 1,
-    quarter: 1,
-    projectName: "TinySwap Protocol",
-    liquidityPair: "TINY/U",
-    capitalRequested: 50000,
-    timelineDays: 90,
-    riskHash: "a]b3f8e2",
-    submitter: "ADDR1234567890ABCDEF",
-    status: ProposalStatus.APPROVED,
-    votesFor: 12500,
-    votesAgainst: 3200,
-    createdAt: Date.now() - 86400000 * 30,
-  },
-  {
-    id: 2,
-    quarter: 1,
-    projectName: "AlgoStable",
-    liquidityPair: "STABLE/U",
-    capitalRequested: 75000,
-    timelineDays: 180,
-    riskHash: "c7d91a4b",
-    submitter: "ADDR0987654321FEDCBA",
-    status: ProposalStatus.VOTING,
-    votesFor: 8300,
-    votesAgainst: 5100,
-    createdAt: Date.now() - 86400000 * 15,
-  },
-  {
-    id: 3,
-    quarter: 1,
-    projectName: "ChainBridge",
-    liquidityPair: "BRIDGE/U",
-    capitalRequested: 30000,
-    timelineDays: 60,
-    riskHash: "e5a2f81c",
-    submitter: "ADDR5555555555ABCDE",
-    status: ProposalStatus.PENDING,
-    votesFor: 0,
-    votesAgainst: 0,
-    createdAt: Date.now() - 86400000 * 2,
-  },
-  {
-    id: 4,
-    quarter: 1,
-    projectName: "DecentraDAO",
-    liquidityPair: "DDAO/U",
-    capitalRequested: 45000,
-    timelineDays: 90,
-    riskHash: "f1b8c3d7",
-    submitter: "ADDR1111111111ABCDEF",
-    status: ProposalStatus.REJECTED,
-    votesFor: 2100,
-    votesAgainst: 14000,
-    createdAt: Date.now() - 86400000 * 45,
-  },
-];
+// ─── Data fetching ───────────────────────────────────────────────────────────
+
+async function fetchApplications(): Promise<LiquidityApplication[]> {
+  if (!APPLICATION_ADDRESS) return [];
+  try {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - APPLICATION_WINDOW_MONTHS);
+    const noteB64 = btoa(APPLICATION_NOTE_PREFIX);
+    const url =
+      `${INDEXER_URLS.mainnet}/v2/accounts/${APPLICATION_ADDRESS}/transactions` +
+      `?note-prefix=${encodeURIComponent(noteB64)}&after-time=${cutoff.toISOString()}&limit=50`;
+
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    return (data.transactions ?? [])
+      .map((txn: { id: string; sender: string; "round-time": number; note?: string }) => {
+        try {
+          const raw = atob(txn.note ?? "");
+          if (!raw.startsWith(APPLICATION_NOTE_PREFIX)) return null;
+          const jsonStr = raw.slice(APPLICATION_NOTE_PREFIX.length);
+          const payload = JSON.parse(jsonStr);
+          return {
+            txId: txn.id,
+            submitter: txn.sender,
+            submittedAt: txn["round-time"],
+            name: String(payload.name ?? ""),
+            asaTitle: String(payload.asaTitle ?? ""),
+            asaId: Number(payload.asaId ?? 0),
+            description: String(payload.description ?? ""),
+            contact: String(payload.contact ?? ""),
+          } satisfies LiquidityApplication;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .reverse(); // newest first
+  } catch {
+    return [];
+  }
+}
+
+async function fetchVotingProposals(): Promise<VotingProposal[]> {
+  if (!VOTING_APP_ID) return [];
+  try {
+    const res = await fetch(
+      `${INDEXER_URLS.mainnet}/v2/applications/${VOTING_APP_ID}/boxes`
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    const proposalBoxes = (data.boxes ?? []).filter((b: { name: string }) => {
+      try {
+        return atob(b.name).startsWith("prop_");
+      } catch {
+        return false;
+      }
+    });
+
+    const proposals: VotingProposal[] = [];
+
+    for (const box of proposalBoxes) {
+      try {
+        const boxRes = await fetch(
+          `${INDEXER_URLS.mainnet}/v2/applications/${VOTING_APP_ID}/box?name=${encodeURIComponent("b64:" + box.name)}`
+        );
+        if (!boxRes.ok) continue;
+        const boxData = await boxRes.json();
+        const bytes = Uint8Array.from(atob(boxData.value), (c) => c.charCodeAt(0));
+
+        const view = new DataView(bytes.buffer);
+        const startTime = Number(view.getBigUint64(0));
+        const endTime = Number(view.getBigUint64(8));
+        const votesA = Number(view.getBigUint64(16));
+        const votesB = Number(view.getBigUint64(24));
+        const votesC = Number(view.getBigUint64(32));
+        const votesD = Number(view.getBigUint64(40));
+
+        const dec = new TextDecoder();
+        const question = dec.decode(bytes.slice(48, 176)).replace(/\0/g, "").trim();
+        const choiceA = dec.decode(bytes.slice(176, 208)).replace(/\0/g, "").trim();
+        const choiceB = dec.decode(bytes.slice(208, 240)).replace(/\0/g, "").trim();
+        const choiceC = dec.decode(bytes.slice(240, 272)).replace(/\0/g, "").trim();
+        const choiceD = dec.decode(bytes.slice(272, 304)).replace(/\0/g, "").trim();
+
+        const choices = [choiceA, choiceB, choiceC, choiceD].filter(Boolean);
+        const votes = [votesA, votesB, votesC, votesD].slice(0, choices.length);
+
+        // Extract proposal ID from box name: "prop_" + uint64 bytes
+        const nameBytes = Uint8Array.from(atob(box.name), (c) => c.charCodeAt(0));
+        const idView = new DataView(nameBytes.buffer, 5); // skip "prop_" (5 bytes)
+        const id = Number(idView.getBigUint64(0));
+
+        proposals.push({ id, question, choices, votes, startTime, endTime });
+      } catch {
+        // skip malformed box
+      }
+    }
+
+    return proposals.sort((a, b) => b.startTime - a.startTime);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchVoterRecord(
+  address: string,
+  proposalId: number
+): Promise<VoterRecord | null> {
+  if (!VOTING_APP_ID || !address) return null;
+  try {
+    const proposalIdBytes = algosdk.encodeUint64(proposalId);
+    const addressBytes = algosdk.decodeAddress(address).publicKey;
+    const voteKey = new Uint8Array([
+      ...new TextEncoder().encode("vote_"),
+      ...proposalIdBytes,
+      ...addressBytes,
+    ]);
+    const b64Key = btoa(String.fromCharCode(...voteKey));
+
+    const res = await fetch(
+      `${INDEXER_URLS.mainnet}/v2/applications/${VOTING_APP_ID}/box?name=${encodeURIComponent("b64:" + b64Key)}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const bytes = Uint8Array.from(atob(data.value), (c) => c.charCodeAt(0));
+    const view = new DataView(bytes.buffer);
+    return {
+      proposalId,
+      choice: Number(view.getBigUint64(0)),
+      lockedAmount: Number(view.getBigUint64(8)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function ProposalsPage() {
-  const { isConnected } = useWallet();
-  const [filter, setFilter] = useState<"all" | "active" | "completed">(
-    "all"
-  );
-  const [showSubmit, setShowSubmit] = useState(false);
+  const { activeAddress } = useWallet();
+  const isFounder = Boolean(FOUNDER_ADDRESS && activeAddress === FOUNDER_ADDRESS);
 
-  // W10: Form state
-  const [formName, setFormName] = useState("");
-  const [formPair, setFormPair] = useState("");
-  const [formCapital, setFormCapital] = useState("");
-  const [formTimeline, setFormTimeline] = useState("");
-  const [formDescription, setFormDescription] = useState("");
-  const [formRisks, setFormRisks] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [applications, setApplications] = useState<LiquidityApplication[]>([]);
+  const [proposals, setProposals] = useState<VotingProposal[]>([]);
+  const [voterRecords, setVoterRecords] = useState<Record<number, VoterRecord | null>>({});
 
-  // W10: Submit handler
-  function handleSubmit() {
-    if (!formName || !formPair || !formCapital || !formTimeline) return;
-    setSubmitting(true);
-    // TODO: construct create_proposal group txn and submit via wallet
-    console.log("Proposal submitted:", {
-      name: formName,
-      pair: formPair,
-      capital: parseInt(formCapital),
-      timeline: parseInt(formTimeline),
-      description: formDescription,
-      risks: formRisks,
-    });
-    setTimeout(() => {
-      setSubmitting(false);
-      setShowSubmit(false);
-      setFormName("");
-      setFormPair("");
-      setFormCapital("");
-      setFormTimeline("");
-      setFormDescription("");
-      setFormRisks("");
-    }, 1000);
-  }
+  const [loadingApps, setLoadingApps] = useState(true);
+  const [loadingVotes, setLoadingVotes] = useState(true);
 
-  const filteredProposals = MOCK_PROPOSALS.filter((p) => {
-    if (filter === "active")
-      return [ProposalStatus.PENDING, ProposalStatus.VOTING].includes(
-        p.status
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+
+  const loadApplications = useCallback(async () => {
+    setLoadingApps(true);
+    setApplications(await fetchApplications());
+    setLoadingApps(false);
+  }, []);
+
+  const loadProposals = useCallback(async () => {
+    setLoadingVotes(true);
+    const fetched = await fetchVotingProposals();
+    setProposals(fetched);
+    setLoadingVotes(false);
+
+    if (activeAddress && fetched.length > 0) {
+      const records: Record<number, VoterRecord | null> = {};
+      await Promise.all(
+        fetched.map(async (p) => {
+          records[p.id] = await fetchVoterRecord(activeAddress, p.id);
+        })
       );
-    if (filter === "completed")
-      return [
-        ProposalStatus.APPROVED,
-        ProposalStatus.REJECTED,
-        ProposalStatus.DEPLOYED,
-      ].includes(p.status);
-    return true;
-  });
+      setVoterRecords(records);
+    }
+  }, [activeAddress]);
+
+  useEffect(() => { loadApplications(); }, [loadApplications]);
+  useEffect(() => { loadProposals(); }, [loadProposals]);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-      <SectionHeader
-        title="Proposals"
-        subtitle="Review and vote on liquidity proposals for the current quarter"
-        action={
-          isConnected ? (
-            <button
-              onClick={() => setShowSubmit(!showSubmit)}
-              className="rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-4 py-2 text-sm font-semibold text-white hover:from-magnet-500 hover:to-magnet-400 transition-all"
-            >
-              + New Proposal
-            </button>
-          ) : null
-        }
-      />
+    <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
 
-      {/* Filters */}
-      <div className="mb-8 flex gap-2">
-        {(["all", "active", "completed"] as const).map((f) => (
+      {/* ── Section 1: Apply for Liquidity ── */}
+      <section className="mb-16">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <FileText className="h-4 w-4 text-magnet-400" />
+              <h2 className="text-xl font-bold text-white">Apply for Liquidity</h2>
+            </div>
+            <p className="text-sm text-gray-500 max-w-xl">
+              Algorand projects can apply for Magnet treasury liquidity. Applications are
+              submitted as a signed on-chain transaction and remain visible for{" "}
+              {APPLICATION_WINDOW_MONTHS} months.
+            </p>
+          </div>
           <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
-              filter === f
-                ? "bg-magnet-600/20 text-magnet-400 border border-magnet-600/30"
-                : "text-gray-400 hover:text-white border border-gray-800 hover:border-gray-700"
-            }`}
+            onClick={() => setShowApplyModal(true)}
+            disabled={!APPLICATION_ADDRESS}
+            className="flex-shrink-0 flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-4 py-2 text-sm font-semibold text-white hover:from-magnet-500 hover:to-magnet-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            title={!APPLICATION_ADDRESS ? "Applications not yet open" : undefined}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            Apply
+            <ChevronRight className="h-4 w-4" />
           </button>
-        ))}
-      </div>
-
-      {/* Submit Form */}
-      {showSubmit && (
-        <Card className="mb-8 border-magnet-700/30">
-          <h3 className="text-lg font-semibold text-white mb-6">
-            Submit a Proposal
-          </h3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
-                Project Name
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. TinySwap"
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
-                Liquidity Pair
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. TINY/U"
-                value={formPair}
-                onChange={(e) => setFormPair(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
-                Capital Requested (Algos)
-              </label>
-              <input
-                type="number"
-                placeholder="50000"
-                value={formCapital}
-                onChange={(e) => setFormCapital(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
-                Timeline (Days)
-              </label>
-              <input
-                type="number"
-                placeholder="90"
-                value={formTimeline}
-                onChange={(e) => setFormTimeline(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
-                Project Description
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Describe your project and how liquidity will improve market conditions..."
-                value={formDescription}
-                onChange={(e) => setFormDescription(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-gray-400 mb-1.5">
-                Known Risks
-              </label>
-              <textarea
-                rows={2}
-                placeholder="Honest assessment of risks..."
-                value={formRisks}
-                onChange={(e) => setFormRisks(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-surface px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-magnet-500 focus:outline-none focus:ring-1 focus:ring-magnet-500"
-              />
-            </div>
-          </div>
-          <div className="mt-6 flex gap-3">
-            <button
-              onClick={handleSubmit}
-              disabled={submitting || !formName || !formPair || !formCapital}
-              className="rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-6 py-2 text-sm font-semibold text-white hover:from-magnet-500 hover:to-magnet-400 transition-all disabled:opacity-50"
-            >
-              {submitting ? "Submitting..." : "Submit Proposal"}
-            </button>
-            <button
-              onClick={() => setShowSubmit(false)}
-              className="rounded-lg border border-gray-700 px-6 py-2 text-sm font-medium text-gray-400 hover:text-white transition-all"
-            >
-              Cancel
-            </button>
-          </div>
-        </Card>
-      )}
-
-      {/* Proposals List */}
-      {filteredProposals.length === 0 ? (
-        <EmptyState
-          title="No proposals found"
-          description="No proposals match the current filter."
-        />
-      ) : (
-        <div className="space-y-4">
-          {filteredProposals.map((proposal) => (
-            <ProposalCard key={proposal.id} proposal={proposal} />
-          ))}
         </div>
+
+        {!APPLICATION_ADDRESS && (
+          <div className="mt-4 rounded-lg border border-dashed border-gray-800 px-4 py-3 text-xs text-gray-600">
+            Applications will open once the treasury wallet is configured.
+          </div>
+        )}
+
+        <div className="mt-6 space-y-3">
+          {loadingApps ? (
+            <ApplicationsSkeleton />
+          ) : applications.length === 0 ? (
+            APPLICATION_ADDRESS ? (
+              <EmptyState
+                title="No applications yet"
+                description="Be the first Algorand project to apply for Magnet liquidity."
+              />
+            ) : null
+          ) : (
+            applications.map((app) => (
+              <ApplicationCard key={app.txId} app={app} />
+            ))
+          )}
+        </div>
+      </section>
+
+      {/* ── Section 2: Governance Votes ── */}
+      <section>
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <Vote className="h-4 w-4 text-magnet-400" />
+              <h2 className="text-xl font-bold text-white">Governance Votes</h2>
+            </div>
+            <p className="text-sm text-gray-500 max-w-xl">
+              Vote on proposals using your Magnet balance. 1 $U = 1 vote. Tokens are
+              locked for the remainder of the 7-day voting window, then returned in full.
+            </p>
+          </div>
+          {isFounder && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              disabled={!VOTING_APP_ID}
+              className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-magnet-700/40 bg-magnet-900/10 px-4 py-2 text-sm font-semibold text-magnet-400 hover:bg-magnet-900/20 hover:border-magnet-600/50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              title={!VOTING_APP_ID ? "Voting contract not deployed" : undefined}
+            >
+              + Create Proposal
+            </button>
+          )}
+        </div>
+
+        <div className="mt-6 space-y-4">
+          {loadingVotes ? (
+            <VotesSkeleton />
+          ) : proposals.length === 0 ? (
+            <EmptyState
+              title="No proposals yet"
+              description={
+                isFounder
+                  ? "Create the first governance proposal using the button above."
+                  : "No governance proposals have been created yet."
+              }
+            />
+          ) : (
+            proposals.map((p) => (
+              <VotingProposalCard
+                key={p.id}
+                proposal={p}
+                voterRecord={voterRecords[p.id] ?? null}
+                onRefresh={loadProposals}
+              />
+            ))
+          )}
+        </div>
+      </section>
+
+      {/* ── Modals ── */}
+      {showApplyModal && (
+        <ApplyModal
+          onClose={() => setShowApplyModal(false)}
+          onSuccess={() => { setShowApplyModal(false); loadApplications(); }}
+        />
+      )}
+      {showCreateModal && (
+        <CreateProposalModal
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={() => { setShowCreateModal(false); loadProposals(); }}
+        />
       )}
     </div>
   );
 }
 
-function ProposalCard({ proposal }: { proposal: Proposal }) {
-  const { isConnected } = useWallet();
-  const [expanded, setExpanded] = useState(false);
-  const [voting, setVoting] = useState(false);
-  const totalVotes = proposal.votesFor + proposal.votesAgainst;
-  const forPercent =
-    totalVotes > 0 ? Math.round((proposal.votesFor / totalVotes) * 100) : 0;
+// ─── Skeletons & Empty State ─────────────────────────────────────────────────
 
-  // W11: Vote handler
-  function handleVote(direction: "for" | "against") {
-    if (voting) return;
-    setVoting(true);
-    // TODO: construct cast_vote group txn and submit via wallet
-    console.log(`Vote ${direction} on proposal ${proposal.id}`);
-    setTimeout(() => setVoting(false), 1000);
-  }
-
+function ApplicationsSkeleton() {
   return (
-    <Card className="hover:border-gray-700/60 transition-colors cursor-pointer">
-      <div onClick={() => setExpanded(!expanded)}>
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-3">
-              <h3 className="text-lg font-semibold text-white">
-                {proposal.projectName}
-              </h3>
-              <StatusBadge
-                status={PROPOSAL_STATUSES[proposal.status]}
-              />
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-gray-400">
-              <span className="flex items-center gap-1">
-                <ArrowUpRight className="h-3.5 w-3.5" />
-                {proposal.liquidityPair}
-              </span>
-              <span className="flex items-center gap-1">
-                <DollarSign className="h-3.5 w-3.5" />
-                {proposal.capitalRequested.toLocaleString()} Algos
-              </span>
-              <span className="flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5" />
-                {proposal.timelineDays} days
-              </span>
-              <span className="flex items-center gap-1">
-                <Users className="h-3.5 w-3.5" />
-                Q{proposal.quarter}
-              </span>
+    <div className="space-y-3">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="rounded-xl border border-gray-800/60 bg-surface-light px-5 py-4 animate-pulse">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-gray-800" />
+            <div className="space-y-1.5">
+              <div className="h-3.5 w-32 rounded bg-gray-800" />
+              <div className="h-2.5 w-20 rounded bg-gray-800/60" />
             </div>
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
 
-        {totalVotes > 0 && (
-          <div className="mt-4">
-            <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-              <span>{forPercent}% For</span>
-              <span>{totalVotes.toLocaleString()} total votes</span>
-            </div>
-            <div className="h-2 rounded-full bg-surface overflow-hidden">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-magnet-600 to-magnet-400 transition-all"
-                style={{ width: `${forPercent}%` }}
-              />
-            </div>
+function VotesSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[0, 1].map((i) => (
+        <div key={i} className="rounded-xl border border-gray-800/60 bg-surface-light p-6 animate-pulse">
+          <div className="h-4 w-3/4 rounded bg-gray-800 mb-5" />
+          <div className="space-y-3">
+            {[0, 1].map((j) => (
+              <div key={j}>
+                <div className="flex justify-between mb-1.5">
+                  <div className="h-3 w-24 rounded bg-gray-800" />
+                  <div className="h-3 w-8 rounded bg-gray-800" />
+                </div>
+                <div className="h-2 rounded-full bg-gray-800" />
+              </div>
+            ))}
           </div>
-        )}
-      </div>
-
-      {expanded && (
-        <div className="mt-6 pt-6 border-t border-gray-800/60">
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-gray-500">Submitter</p>
-              <p className="font-mono text-gray-300 truncate">
-                {proposal.submitter}
-              </p>
-            </div>
-            <div>
-              <p className="text-gray-500">Risk Hash</p>
-              <p className="font-mono text-gray-300">{proposal.riskHash}</p>
-            </div>
-          </div>
-
-          {proposal.status === ProposalStatus.VOTING && isConnected && (
-            <div className="mt-6 flex gap-3">
-              <button
-                onClick={() => handleVote("for")}
-                disabled={voting}
-                className="rounded-lg bg-green-600/20 border border-green-600/30 px-6 py-2 text-sm font-semibold text-green-400 hover:bg-green-600/30 transition-all disabled:opacity-50"
-              >
-                {voting ? "Voting..." : "Vote For"}
-              </button>
-              <button
-                onClick={() => handleVote("against")}
-                disabled={voting}
-                className="rounded-lg bg-red-600/20 border border-red-600/30 px-6 py-2 text-sm font-semibold text-red-400 hover:bg-red-600/30 transition-all disabled:opacity-50"
-              >
-                {voting ? "Voting..." : "Vote Against"}
-              </button>
-            </div>
-          )}
         </div>
-      )}
-    </Card>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-gray-800 px-6 py-10 text-center">
+      <p className="font-medium text-gray-500">{title}</p>
+      <p className="mt-1 text-sm text-gray-700">{description}</p>
+    </div>
   );
 }
