@@ -60,7 +60,8 @@ VOTE_BOX_SIZE = Int(16)
 VOTE_CHOICE = Int(0)
 VOTE_AMOUNT = Int(8)
 
-VOTE_DURATION = Int(604800)  # 7 days in seconds
+VOTE_DURATION = Int(604800)    # 7 days in seconds
+DECIMAL_FACTOR = Int(100000)   # 10^5 — 1 display $U = 100,000 base units
 
 
 @Subroutine(TealType.none)
@@ -146,6 +147,8 @@ def approval_program():
         Assert(Gtxn[1].asset_receiver() == Global.current_application_address()),
         Assert(Gtxn[1].xfer_asset() == App.globalGet(MAGNET_ASA_KEY)),
         Assert(Gtxn[1].asset_amount() > Int(0)),
+        # Approach 2: only whole $U accepted — no fractional dust locked in contract
+        Assert(Gtxn[1].asset_amount() % DECIMAL_FACTOR == Int(0)),
 
         (box_key := ScratchVar()).store(
             Concat(PROPOSAL_PREFIX, Txn.application_args[1])

@@ -6,6 +6,8 @@ import { useWallet } from "@/hooks/useWallet";
 import algosdk from "algosdk";
 import { VoteModal } from "./VoteModal";
 import { VOTING_APP_ID, MAGNET_TOKEN, ALGOD_URLS } from "@/lib/constants";
+
+const { decimalFactor } = MAGNET_TOKEN;
 import type { VotingProposal, VoterRecord } from "@/types/dao";
 
 interface Props {
@@ -38,7 +40,9 @@ export function VotingProposalCard({ proposal, voterRecord, onRefresh }: Props) 
 
   const isActive = Math.floor(Date.now() / 1000) < proposal.endTime;
   const isEnded = !isActive;
-  const totalVotes = proposal.votes.reduce((a, b) => a + b, 0);
+  // votes are stored in base units; convert to display $U for all rendering
+  const votesDisplay = proposal.votes.map((v) => Math.floor(v / decimalFactor));
+  const totalVotes = votesDisplay.reduce((a, b) => a + b, 0);
 
   async function openVoteModal(choiceIndex: number) {
     if (!activeAddress) return;
@@ -107,7 +111,7 @@ export function VotingProposalCard({ proposal, voterRecord, onRefresh }: Props) 
         <div className="space-y-3">
           {proposal.choices.map((choice, i) => {
             if (!choice.trim()) return null;
-            const weight = proposal.votes[i] ?? 0;
+            const weight = votesDisplay[i] ?? 0;
             const pct = totalVotes > 0 ? Math.round((weight / totalVotes) * 100) : 0;
             const isMyVote = voterRecord?.choice === i;
 
@@ -174,7 +178,7 @@ export function VotingProposalCard({ proposal, voterRecord, onRefresh }: Props) 
         {voterRecord && isActive && (
           <div className="mt-3 flex items-center gap-1.5 text-xs text-yellow-500">
             <Lock className="h-3 w-3" />
-            <span>Your {voterRecord.lockedAmount.toLocaleString()} $U are locked until voting ends</span>
+            <span>Your {Math.floor(voterRecord.lockedAmount / decimalFactor).toLocaleString()} $U are locked until voting ends</span>
           </div>
         )}
 
@@ -185,7 +189,7 @@ export function VotingProposalCard({ proposal, voterRecord, onRefresh }: Props) 
               disabled={claiming}
               className="rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-4 py-2 text-xs font-semibold text-white hover:from-magnet-500 hover:to-magnet-400 transition-all disabled:opacity-50"
             >
-              {claiming ? "Claiming…" : `Claim ${voterRecord.lockedAmount.toLocaleString()} $U`}
+              {claiming ? "Claiming…" : `Claim ${Math.floor(voterRecord.lockedAmount / decimalFactor).toLocaleString()} $U`}
             </button>
             {claimError && <p className="mt-1.5 text-xs text-red-400">{claimError}</p>}
           </div>

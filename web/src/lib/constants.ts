@@ -12,8 +12,9 @@ export const MAGNET_TOKEN = {
   name: "Magnet",
   ticker: "$U",
   asaId: 3081853135,
-  totalSupply: 750_000,
-  decimals: 0,
+  totalSupply: 750_000,      // display units (base units: 75,000,000,000)
+  decimals: 5,               // 1 $U = 100,000 base units
+  decimalFactor: 100_000,    // 10^5
 } as const;
 
 export const QUARTER_SECONDS = 7_776_000; // 90 days
