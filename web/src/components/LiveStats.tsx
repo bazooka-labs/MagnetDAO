@@ -3,7 +3,7 @@ import { Suspense } from "react";
 
 const MAGNET_ASA_ID = 3081853135;
 const USDC_ASA_ID = 31566704;
-const TREASURY_WALLET = ""; // TODO: set treasury wallet address
+const TREASURY_WALLET = "VM2JLZMKFLE635FXX54MU4TY6JUDIMLNRXOQDZUX3FKUFLS2BPEO2VL7QM";
 
 async function fetchTVL(): Promise<string> {
   try {

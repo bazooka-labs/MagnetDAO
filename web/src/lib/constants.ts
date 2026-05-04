@@ -18,12 +18,10 @@ export const MAGNET_TOKEN = {
 
 export const QUARTER_SECONDS = 7_776_000; // 90 days
 
-// Founder/treasury wallet — set once wallet is designated.
-// Used for: founder-only UI gating, application fee destination.
-export const FOUNDER_ADDRESS = "";
+// Founder/treasury wallet — used for founder-only UI gating and application fee destination.
+export const FOUNDER_ADDRESS = "VM2JLZMKFLE635FXX54MU4TY6JUDIMLNRXOQDZUX3FKUFLS2BPEO2VL7QM";
 
 // Destination for liquidity application fee transactions.
-// Defaults to FOUNDER_ADDRESS; can be a separate inbox address if preferred.
 export const APPLICATION_ADDRESS = FOUNDER_ADDRESS;
 
 // Submission fee in microALGO (0 = applicant pays only the 0.001 ALGO network fee).
