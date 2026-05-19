@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
 import { WalletProvider } from "@/hooks/useWallet";
-import { Navbar } from "@/components/Navbar";
-import { Footer } from "@/components/Footer";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MagnetDAO — Algorand Liquidity DAO",
+  title: "Magnet Strategies — Algorand Liquidity",
   description:
-    "MagnetDAO is a founder-guided Algorand liquidity DAO. Magnet ($U) powers governance, liquidity growth, and fee generation across the Algorand ecosystem.",
+    "Magnet Strategies is an Algorand-native liquidity portfolio. Home of the Magnet token ($U) and MagnetDAO — founder-guided liquidity, governance, and fee generation.",
 };
 
 export default function RootLayout({
@@ -19,9 +17,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className="min-h-screen bg-surface text-gray-100 antialiased">
         <WalletProvider>
-          <Navbar />
-          <main className="min-h-[calc(100vh-160px)]">{children}</main>
-          <Footer />
+          {children}
         </WalletProvider>
       </body>
     </html>

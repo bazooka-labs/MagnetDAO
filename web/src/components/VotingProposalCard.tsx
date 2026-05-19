@@ -5,7 +5,7 @@ import { Clock, Lock } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import algosdk from "algosdk";
 import { VoteModal } from "./VoteModal";
-import { VOTING_APP_ID, MAGNET_TOKEN, ALGOD_URLS } from "@/lib/constants";
+import { VOTING_APP_ID, MAGNET_TOKEN, ALGOD_URLS, VOTING_NETWORK } from "@/lib/constants";
 
 const { decimalFactor } = MAGNET_TOKEN;
 import type { VotingProposal, VoterRecord } from "@/types/dao";
@@ -47,7 +47,7 @@ export function VotingProposalCard({ proposal, voterRecord, onRefresh }: Props) 
   async function openVoteModal(choiceIndex: number) {
     if (!activeAddress) return;
     try {
-      const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS.mainnet, "");
+      const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS[VOTING_NETWORK], "");
       const info = await client.accountAssetInformation(activeAddress, MAGNET_TOKEN.asaId).do();
       const bal = Number(info.assetHolding?.amount ?? 0);
       setMagnetBalance(bal);
@@ -63,17 +63,26 @@ export function VotingProposalCard({ proposal, voterRecord, onRefresh }: Props) 
     setClaiming(true);
     setClaimError("");
     try {
-      const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS.mainnet, "");
+      const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS[VOTING_NETWORK], "");
       const sp = await client.getTransactionParams().do();
       const enc = new TextEncoder();
       const proposalIdBytes = algosdk.encodeUint64(proposal.id);
+      const senderPubKey = algosdk.decodeAddress(activeAddress).publicKey;
+
+      const propBoxName = new Uint8Array([...enc.encode("prop_"), ...proposalIdBytes]);
+      const voteBoxName = new Uint8Array([...enc.encode("vote_"), ...proposalIdBytes, ...senderPubKey]);
+
+      // claim_tokens does an inner ASA transfer with fee=0; outer covers both via fee pooling
+      sp.flatFee = true;
+      sp.fee = BigInt(2000);
 
       const txn = algosdk.makeApplicationNoOpTxnFromObject({
         sender: activeAddress,
         appIndex: VOTING_APP_ID,
         appArgs: [enc.encode("claim_tokens"), proposalIdBytes],
         boxes: [
-          { appIndex: VOTING_APP_ID, name: new Uint8Array([...proposalIdBytes, ...algosdk.decodeAddress(activeAddress).publicKey]) },
+          { appIndex: VOTING_APP_ID, name: propBoxName },
+          { appIndex: VOTING_APP_ID, name: voteBoxName },
         ],
         foreignAssets: [MAGNET_TOKEN.asaId],
         suggestedParams: sp,

@@ -103,7 +103,7 @@ async function StatsContent() {
           className="relative rounded-xl border border-magnet-500/30 bg-gradient-to-br from-magnet-950/60 to-surface-light p-6 transition-all hover:border-magnet-500/50"
           style={{
             boxShadow:
-              "0 0 24px rgba(59,130,246,0.10), inset 0 0 32px rgba(59,130,246,0.04)",
+              "0 0 24px rgba(168,85,247,0.10), inset 0 0 32px rgba(168,85,247,0.04)",
           }}
         >
           {/* Top edge glow line */}
@@ -118,7 +118,7 @@ async function StatsContent() {
 
           <p
             className="text-3xl font-bold tracking-tight text-white"
-            style={{ textShadow: "0 0 20px rgba(59,130,246,0.45)" }}
+            style={{ textShadow: "0 0 20px rgba(168,85,247,0.45)" }}
           >
             {stat.value}
           </p>

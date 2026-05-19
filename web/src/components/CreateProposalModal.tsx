@@ -48,8 +48,24 @@ export function CreateProposalModal({ onClose, onSuccess }: Props) {
 
     try {
       const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS.mainnet, "");
-      const sp = await client.getTransactionParams().do();
 
+      // Fetch current proposal_count to compute the box name for the next proposal
+      const appRes = await fetch(`${ALGOD_URLS.mainnet}/v2/applications/${VOTING_APP_ID}`);
+      const appData = await appRes.json();
+      const gs: Array<{ key: string; value: { uint?: number; type: number } }> =
+        appData.params?.["global-state"] ?? [];
+      const countEntry = gs.find((e) => atob(e.key) === "proposal_count");
+      const proposalCount = Number(countEntry?.value?.uint ?? 0);
+      const nextId = proposalCount + 1;
+
+      // Box name: "prop_" (5 bytes) + uint64 big-endian (8 bytes)
+      const prefix = new TextEncoder().encode("prop_");
+      const idBytes = algosdk.encodeUint64(nextId);
+      const boxName = new Uint8Array(prefix.length + idBytes.length);
+      boxName.set(prefix, 0);
+      boxName.set(idBytes, prefix.length);
+
+      const sp = await client.getTransactionParams().do();
       const enc = new TextEncoder();
 
       // Pad choices to exactly 4 slots (empty string for unused)
@@ -71,7 +87,7 @@ export function CreateProposalModal({ onClose, onSuccess }: Props) {
           enc.encode(c.trim()),
           enc.encode(d.trim()),
         ],
-        boxes: [{ appIndex: VOTING_APP_ID, name: new Uint8Array() }],
+        boxes: [{ appIndex: VOTING_APP_ID, name: boxName }],
         suggestedParams: sp,
       });
 
@@ -110,12 +126,6 @@ export function CreateProposalModal({ onClose, onSuccess }: Props) {
               <X className="h-5 w-5" />
             </button>
           </div>
-
-          {VOTING_APP_ID === 0 && (
-            <div className="mb-4 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-xs text-yellow-400">
-              Voting contract not yet deployed. Set VOTING_APP_ID in constants.ts.
-            </div>
-          )}
 
           <div className="space-y-4">
             <div>

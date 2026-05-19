@@ -35,7 +35,10 @@ export const APPLICATION_NOTE_PREFIX = "magnet-apply:v1:";
 export const APPLICATION_WINDOW_MONTHS = 6;
 
 // Deployed voting.py app ID — set after testnet/mainnet deployment.
-export const VOTING_APP_ID = 0;
+export const VOTING_APP_ID = 3554779766;
 
 // Vote window duration matching the voting.py contract constant.
 export const VOTE_DURATION_SECONDS = 604_800; // 7 days
+
+// Network the voting contract is deployed on. Flip to "mainnet" when live.
+export const VOTING_NETWORK: "mainnet" | "testnet" = "mainnet";

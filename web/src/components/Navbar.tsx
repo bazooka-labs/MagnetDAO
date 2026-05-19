@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useWallet } from "@/hooks/useWallet";
-import { Magnet, Menu, X, ChevronDown, Wallet } from "lucide-react";
+import { Menu, X, ChevronDown, Wallet } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import type { Wallet as WalletType } from "@txnlab/use-wallet-react";
 
@@ -14,10 +15,10 @@ export function Navbar() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const navLinks = [
-    { href: "/", label: "Home" },
-    { href: "/proposals", label: "Proposals" },
-    { href: "/treasury", label: "Treasury" },
-    { href: "/governance", label: "Governance" },
+    { href: "/dao", label: "Home" },
+    { href: "/dao/proposals", label: "Proposals" },
+    { href: "/dao/treasury", label: "Treasury" },
+    { href: "/dao/governance", label: "Governance" },
   ];
 
   function truncateAddress(addr: string): string {
@@ -44,10 +45,14 @@ export function Navbar() {
     <nav className="sticky top-0 z-50 border-b border-gray-800/60 bg-surface/80 backdrop-blur-xl">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 group">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-magnet-500 to-magnet-700">
-              <Magnet className="h-5 w-5 text-white" />
-            </div>
+          <Link href="/dao" className="flex items-center gap-2.5 group">
+            <Image
+              src="/magnet-logo.png"
+              alt="MagnetDAO"
+              width={32}
+              height={32}
+              priority
+            />
             <span className="text-lg font-bold text-white group-hover:text-magnet-400 transition-colors">
               MagnetDAO
             </span>

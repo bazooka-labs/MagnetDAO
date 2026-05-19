@@ -5,16 +5,24 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 :root {
-  --background: #0a0f1a;
+  --background: #08000f;
   --foreground: #e2e8f0;
-  --magnet-blue: #3b82f6;
-  --magnet-dark: #1e3a8a;
+  --magnet-purple: #a855f7;
+  --magnet-dark: #581c87;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
   font-family: "Inter", system-ui, sans-serif;
+  /* Radial vignette: purple bloom from center, fades to near-black */
+  background-image: radial-gradient(
+    ellipse 140% 120% at 50% 50%,
+    rgba(139, 120, 210, 0.28) 0%,
+    rgba(107, 77, 180, 0.14) 45%,
+    transparent 72%
+  );
+  background-attachment: fixed;
 }
 
 /* Custom scrollbar */
@@ -22,42 +30,72 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #111827;
+  background: #0f0820;
 }
 ::-webkit-scrollbar-thumb {
-  background: #374151;
+  background: #3b1278;
   border-radius: 3px;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: #6b21a8;
+}
 
-/* Glow effects */
+/* Glow effects — purple */
 .glow-blue {
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.15);
+}
+
+.glow-purple {
+  box-shadow: 0 0 28px rgba(168, 85, 247, 0.25);
 }
 
 .glow-text {
-  text-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+  text-shadow: 0 0 24px rgba(192, 132, 252, 0.70),
+               0 0 55px rgba(147, 51, 234, 0.40);
 }
 
-/* Gradient backgrounds */
+/* Gradient borders */
 .gradient-border {
-  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #1e3a8a 100%);
+  background: linear-gradient(135deg, #581c87 0%, #a855f7 50%, #581c87 100%);
 }
 
-/* Animation */
+/* Neon glow — hero logo (softer, matches dusty lavender palette) */
+.magnet-glow {
+  filter: drop-shadow(0 0 10px rgba(192, 132, 252, 0.80))
+          drop-shadow(0 0 28px rgba(147, 51, 234, 0.55))
+          drop-shadow(0 0 55px rgba(88, 28, 135, 0.35));
+}
+
+/* Neon glow — large pulsing hero version */
+@keyframes glow-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 14px rgba(192, 132, 252, 0.80))
+            drop-shadow(0 0 36px rgba(147, 51, 234, 0.60))
+            drop-shadow(0 0 72px rgba(88, 28, 135, 0.40));
+  }
+  50% {
+    filter: drop-shadow(0 0 22px rgba(216, 180, 254, 0.95))
+            drop-shadow(0 0 58px rgba(168, 85, 247, 0.75))
+            drop-shadow(0 0 110px rgba(147, 51, 234, 0.50));
+  }
+}
+.magnet-glow-pulse {
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+/* Animations */
 @keyframes pulse-slow {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
 }
-
 .animate-pulse-slow {
   animation: pulse-slow 3s ease-in-out infinite;
 }
 
 @keyframes float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+  50% { transform: translateY(-10px); }
 }
-
 .animate-float {
-  animation: float 6s ease-in-out infinite;
+  animation: float 5s ease-in-out infinite;
 }

@@ -10,7 +10,7 @@ export function HeroCTA() {
   return (
     <div className="mt-10 flex items-center justify-center gap-4">
       <Link
-        href="/proposals"
+        href="/dao/proposals"
         className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-magnet-600/20 hover:from-magnet-500 hover:to-magnet-400 transition-all"
       >
         View Proposals
@@ -18,7 +18,7 @@ export function HeroCTA() {
       </Link>
       {!isConnected && (
         <Link
-          href="/governance"
+          href="/dao/governance"
           className="inline-flex items-center gap-2 rounded-lg border border-gray-700 px-6 py-3 text-sm font-medium text-gray-300 hover:bg-surface-lighter hover:text-white transition-all"
         >
           Learn More

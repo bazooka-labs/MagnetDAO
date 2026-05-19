@@ -14,8 +14,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const manager = useMemo(
     () =>
       new WalletManager({
-        defaultNetwork: NetworkId.TESTNET,
+        defaultNetwork: NetworkId.MAINNET,
+        options: { resetNetwork: true },
         networks: {
+          [NetworkId.MAINNET]: {
+            algod: {
+              baseServer: "https://mainnet-api.algonode.cloud",
+              port: "",
+              token: "",
+            },
+          },
           [NetworkId.TESTNET]: {
             algod: {
               baseServer: "https://testnet-api.algonode.cloud",

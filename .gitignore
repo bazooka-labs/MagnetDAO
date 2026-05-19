@@ -12,3 +12,4 @@ deployment.json
 .venv/
 contracts/.venv/
 contracts/build/
+.vercel

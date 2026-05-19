@@ -4,7 +4,7 @@ import { useState } from "react";
 import { X, Lock } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import algosdk from "algosdk";
-import { VOTING_APP_ID, MAGNET_TOKEN, ALGOD_URLS } from "@/lib/constants";
+import { VOTING_APP_ID, MAGNET_TOKEN, ALGOD_URLS, VOTING_NETWORK } from "@/lib/constants";
 import type { VotingProposal } from "@/types/dao";
 
 interface Props {
@@ -47,11 +47,15 @@ export function VoteModal({ proposal, choiceIndex, magnetBalance, onClose, onSuc
     setErrorMsg("");
 
     try {
-      const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS.mainnet, "");
+      const client = algodClient ?? new algosdk.Algodv2("", ALGOD_URLS[VOTING_NETWORK], "");
       const sp = await client.getTransactionParams().do();
 
       const enc = new TextEncoder();
       const proposalIdBytes = algosdk.encodeUint64(proposal.id);
+      const senderPubKey = algosdk.decodeAddress(activeAddress).publicKey;
+
+      const propBoxName = new Uint8Array([...enc.encode("prop_"), ...proposalIdBytes]);
+      const voteBoxName = new Uint8Array([...enc.encode("vote_"), ...proposalIdBytes, ...senderPubKey]);
 
       // [0] AppCall: cast_vote(proposal_id, choice_index)
       const appCallTxn = algosdk.makeApplicationNoOpTxnFromObject({
@@ -63,7 +67,8 @@ export function VoteModal({ proposal, choiceIndex, magnetBalance, onClose, onSuc
           algosdk.encodeUint64(choiceIndex),
         ],
         boxes: [
-          { appIndex: VOTING_APP_ID, name: new Uint8Array([...proposalIdBytes, ...algosdk.decodeAddress(activeAddress).publicKey]) },
+          { appIndex: VOTING_APP_ID, name: propBoxName },
+          { appIndex: VOTING_APP_ID, name: voteBoxName },
         ],
         foreignAssets: [MAGNET_TOKEN.asaId],
         suggestedParams: sp,
