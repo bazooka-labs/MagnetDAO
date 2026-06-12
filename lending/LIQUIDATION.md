@@ -177,12 +177,14 @@ On success:
 - `outstanding_liquidation_balance -= outstanding_balance` ← decrement, not zero assignment
 - `outstanding_balance` zeroed
 - `outstanding_registered = false`
-- `collateral_held` transferred directly to borrower wallet via inner transaction (not to box)
+- `collateral_held` transferred directly to borrower wallet via inner transaction
 - Liquidation box deleted, 23,300 microALGO MBR returned to contract
 - `liquidation_eligible_timestamp` reset to `current_time` — gives borrower a fresh 2-hour window
-- `liquidation_state = 1` — position returns to eligible; borrower must still repay or add collateral
+- `liquidation_state = 1` — position returns to eligible
 
-Resetting the timestamp on cancel-without-repayment prevents the founder from immediately re-liquidating in a loop after cancellation. The borrower gets a fresh grace period each time a cancel occurs.
+**Important:** `collateral_amount` in the borrower box remains 0 after cancel — the collateral was returned to the borrower's wallet, not re-deposited into the box. The borrower's debt (`borrow_balance`) is still outstanding with no collateral backing it. Health factor is effectively 0. The borrower must call `deposit_collateral()` within the 2-hour window to restore their position — otherwise the position is immediately re-liquidatable once the grace period expires. `borrow_balance` and `total_borrowed` are unchanged since the debt is not cleared.
+
+Resetting the timestamp prevents the founder from immediately re-liquidating in a loop after cancellation. The borrower gets a fresh grace period each time a cancel occurs.
 
 `cancel_liquidation()` is callable by admin wallet only.
 

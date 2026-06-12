@@ -136,7 +136,7 @@ At 80%: 7.0%    At 90%: 53.5%    At 100%: 100.0%
 | `borrow(amount)` | `total_borrowed += amount` |
 | `repay(amount)` partial | `total_borrowed -= amount` |
 | `repay_all()` / force-close | `total_borrowed -= borrow_balance` (full remaining balance including accrued interest) |
-| Liquidation settlement complete (`outstanding_balance = 0`) | `total_borrowed -= outstanding_balance` (the frozen debt at time of seizure) |
+| `deposit_liquidation_proceeds(amount)` | `total_borrowed -= amount` (decremented per deposit, not at completion) |
 
 `total_borrowed` drives three critical calculations: interest accrual, utilization rate, and available withdrawal liquidity. An incorrect value propagates errors into all three.
 

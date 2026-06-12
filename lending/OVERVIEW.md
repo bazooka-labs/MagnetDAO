@@ -37,9 +37,10 @@ If health factor drops below 1.0
     → 2-hour on-chain grace period (borrower can self-rescue)
     → after 2 hours, founder may trigger liquidation
     → collateral seized atomically with pool liquidity lock
-    → excess collateral + bonus returned immediately
-    → founder sells minimum collateral off-chain in batches
-    → deposits proceeds until settlement tally reaches zero
+    → excess collateral returned to borrower immediately
+    → 8% bonus (in collateral asset) sent to founder wallet immediately
+    → founder sells remaining seized collateral off-chain in batches
+    → deposits USDC proceeds until settlement tally reaches zero
     → lenders restored, liquidation closed
 ```
 
@@ -78,7 +79,7 @@ Founder                      ← monitors health factors, triggers liquidation a
 
 ## Security Architecture
 
-Full security review completed across two passes before finalizing the architecture.
+Full security review completed across ten passes before finalizing the architecture.
 
 | Risk | Protection |
 |---|---|
@@ -113,7 +114,7 @@ Full security review completed across two passes before finalizing the architect
 | deposit_liquidation_proceeds overpayment | Assert amount <= outstanding_balance |
 | Multiple simultaneous liquidations | Increment/decrement counter handles multiple correctly |
 | Interest accrues in state 2 | Frozen at seizure — last_accrual_block not updated in state 2 |
-| Liquidation box MBR funding | Founder pays 26,500 microALGO in liquidate() outer txn |
+| Liquidation box MBR funding | Founder pays 23,300 microALGO in liquidate() outer txn |
 | Both boxes deleted on settlement | Liquidation box + borrower box both deleted when outstanding = 0 |
 | Seized amount rounding | Floor rounds borrower-favorably; documented and confirmed correct |
 | Oracle stale during collateral top-up | Deposit accepted, grace period cleared unconditionally |

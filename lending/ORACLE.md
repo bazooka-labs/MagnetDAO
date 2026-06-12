@@ -156,9 +156,16 @@ except:
 
 # 3. TinyMan on-chain — always attempt
 try:
-    u_algo    = read_tinyman_reserves(U_ALGO_POOL_ID)
-    algo_usdc = read_tinyman_reserves(ALGO_USDC_POOL_ID)
-    sources.append(("tinyman", u_algo * algo_usdc))
+    u_pool_algo   = read_reserve(U_ALGO_POOL_ID, "asset_1_reserves")
+    u_pool_u      = read_reserve(U_ALGO_POOL_ID, "asset_2_reserves")
+    usdc_pool_algo = read_reserve(ALGO_USDC_POOL_ID, "asset_1_reserves")
+    usdc_pool_usdc = read_reserve(ALGO_USDC_POOL_ID, "asset_2_reserves")
+    u_price_algo  = u_pool_algo / (u_pool_u * 10)  # decimal-corrected
+    if u_price_algo == 0:
+        raise ValueError("TinyMan price resolved to zero")
+    algo_price_usdc = usdc_pool_usdc / usdc_pool_algo
+    scaled = int(u_price_algo * algo_price_usdc * 1_000_000)
+    sources.append(("tinyman", scaled))
 except:
     alert("TinyMan read failed — critical")
 
