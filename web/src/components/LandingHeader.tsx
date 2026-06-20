@@ -1,33 +1,28 @@
 "use client";
 
-import { Magnet } from "lucide-react";
 import { AboutModal } from "@/components/AboutModal";
 import { WalletButton } from "@/components/WalletButton";
 
 export function LandingHeader() {
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/10 bg-black/50 backdrop-blur-md">
-      <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
+    <header className="fixed top-0 left-0 right-0 z-50">
+      {/* Layered background: dark gradient + blur */}
+      <div className="absolute inset-0 bg-gradient-to-b from-[#0a0010]/80 via-[#0d0018]/70 to-black/50 backdrop-blur-md" />
 
-        {/* Brand */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded bg-gradient-to-br from-magnet-500 to-magnet-700">
-            <Magnet className="h-4 w-4 text-white" />
-          </div>
-          <span
-            className="text-base font-bold text-white"
-            style={{ fontFamily: "'Times New Roman', Times, serif" }}
-          >
-            Magnet Strategies
-          </span>
-        </div>
+      {/* Bottom glow line */}
+      <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-magnet-500/60 to-transparent" />
 
-        {/* Right: About + Wallet */}
-        <div className="flex items-center gap-3">
-          <AboutModal />
-          <WalletButton />
-        </div>
+      {/* Ambient purple glow anchored to the centre */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-8 bg-magnet-600/20 blur-3xl rounded-full" />
+      </div>
 
+      <div className="relative mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
+        {/* Left: About */}
+        <AboutModal />
+
+        {/* Right: Wallet */}
+        <WalletButton />
       </div>
     </header>
   );

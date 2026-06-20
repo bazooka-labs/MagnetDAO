@@ -122,20 +122,23 @@ export default async function LandingPage() {
       <div className="relative z-10 mx-auto max-w-4xl px-6 pt-28 pb-20 flex flex-col items-center text-center">
 
         {/* Logo */}
-        <div className="mb-8">
+        <div className="mb-8 relative flex items-center justify-center">
+          {/* Radial glow backdrop */}
+          <div className="absolute w-72 h-72 rounded-full bg-magnet-600/25 blur-3xl" />
+          <div className="absolute w-48 h-48 rounded-full bg-magnet-400/15 blur-2xl" />
           <Image
             src="/magnet-logo.png"
             alt="Magnet Strategies"
             width={275}
             height={275}
-            className="animate-float magnet-glow-pulse"
+            className="relative animate-float magnet-glow-pulse"
             priority
           />
         </div>
 
         {/* Headline */}
         <h1
-          className="text-5xl font-extrabold tracking-tight text-white sm:text-6xl lg:text-7xl mb-5"
+          className="glow-text text-5xl font-extrabold tracking-tight text-white sm:text-6xl lg:text-7xl mb-5"
           style={{ fontFamily: "'Times New Roman', Times, serif" }}
         >
           Magnet Strategies

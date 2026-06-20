@@ -14,6 +14,7 @@ export function Navbar() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const navLinks = [
+    { href: "/magnetfi", label: "MagnetFi" },
     { href: "/dao", label: "Governance" },
     { href: "/dao/proposals", label: "Proposals" },
     { href: "/dao/treasury", label: "Treasury" },
@@ -47,7 +48,10 @@ export function Navbar() {
             <div className="flex h-8 w-8 items-center justify-center rounded bg-gradient-to-br from-magnet-500 to-magnet-700">
               <Magnet className="h-4.5 w-4.5 text-white" />
             </div>
-            <span className="text-lg font-bold text-white group-hover:text-magnet-400 transition-colors">
+            <span
+              className="text-lg font-bold text-white group-hover:text-magnet-400 transition-colors"
+              style={{ fontFamily: "'Times New Roman', Times, serif" }}
+            >
               Magnet Strategies
             </span>
           </Link>
