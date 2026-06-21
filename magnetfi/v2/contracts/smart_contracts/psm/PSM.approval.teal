@@ -1,0 +1,849 @@
+#pragma version 11
+#pragma typetrack false
+
+// algopy.arc4.ARC4Contract.approval_program() -> uint64:
+main:
+    intcblock 0 1 8 4
+    bytecblock "usdc_asa_id" "musd_asa_id" "redeem_fee_bps" "treasury_address" "vault_app_id"
+    // smart_contracts/psm/contract.py:18-21
+    // class PSM(
+    //     ARC4Contract,
+    //     state_totals=StateTotals(global_uints=4, global_bytes=1),
+    // ):
+    txn OnCompletion
+    !
+    assert
+    txn ApplicationID
+    bz main_create_NoOp@16
+    pushbytess 0xd7c78c69 0x617b0963 0xe8ab6a79 0xd80d698d 0xb171ceff 0x894c839e 0xe6470cd5 0xfcd8caaf 0x358d1e74 0xe3cdef3b // method "mint_musd(uint64)void", method "redeem_musd(uint64)void", method "issue_musd(address,uint64)void", method "receive_musd(uint64)void", method "deposit_usdc(uint64)void", method "withdraw_usdc(uint64)void", method "set_redeem_fee(uint64)void", method "set_treasury(address)void", method "set_vault_contract(uint64)void", method "opt_in_asset(uint64)void"
+    txna ApplicationArgs 0
+    match mint_musd redeem_musd issue_musd receive_musd deposit_usdc withdraw_usdc set_redeem_fee set_treasury set_vault_contract opt_in_asset
+    err
+
+main_create_NoOp@16:
+    // smart_contracts/psm/contract.py:18-21
+    // class PSM(
+    //     ARC4Contract,
+    //     state_totals=StateTotals(global_uints=4, global_bytes=1),
+    // ):
+    pushbytes 0x5c741c89 // method "deploy(uint64,uint64)void"
+    txna ApplicationArgs 0
+    match deploy
+    err
+
+
+// smart_contracts.psm.contract.PSM.deploy[routing]() -> void:
+deploy:
+    // smart_contracts/psm/contract.py:45
+    // @arc4.abimethod(allow_actions=["NoOp"], create="require")
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:52
+    // assert musd_asa_id != UInt64(0), "musd_asa_id required"
+    dig 1
+    assert // musd_asa_id required
+    // smart_contracts/psm/contract.py:53
+    // assert usdc_asa_id != UInt64(0), "usdc_asa_id required"
+    dup
+    assert // usdc_asa_id required
+    // smart_contracts/psm/contract.py:54
+    // assert musd_asa_id != usdc_asa_id, "musd and usdc must be different assets"
+    dup2
+    !=
+    assert // musd and usdc must be different assets
+    // smart_contracts/psm/contract.py:55
+    // self.musd_asa_id.value = musd_asa_id
+    bytec_1 // "musd_asa_id"
+    uncover 2
+    app_global_put
+    // smart_contracts/psm/contract.py:56
+    // self.usdc_asa_id.value = usdc_asa_id
+    bytec_0 // "usdc_asa_id"
+    swap
+    app_global_put
+    // smart_contracts/psm/contract.py:57
+    // self.redeem_fee_bps.value = UInt64(100)  # 1% default
+    bytec_2 // "redeem_fee_bps"
+    pushint 100
+    app_global_put
+    // smart_contracts/psm/contract.py:45
+    // @arc4.abimethod(allow_actions=["NoOp"], create="require")
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.mint_musd[routing]() -> void:
+mint_musd:
+    // smart_contracts/psm/contract.py:105
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:113
+    // assert amount > UInt64(0), "amount must be > 0"
+    dup
+    assert // amount must be > 0
+    // smart_contracts/psm/contract.py:115-116
+    // # Verify the outer group contains the correct USDC deposit.
+    // usdc_xfer = op.Txn.group_index - UInt64(1)
+    txn GroupIndex
+    intc_1 // 1
+    -
+    // smart_contracts/psm/contract.py:117
+    // pay_txn = gtxn.AssetTransferTransaction(usdc_xfer)
+    dup
+    gtxns TypeEnum
+    intc_3 // axfer
+    ==
+    assert // transaction type is axfer
+    // smart_contracts/psm/contract.py:118
+    // assert pay_txn.xfer_asset == Asset(self.usdc_asa_id.value), "wrong asset"
+    dup
+    gtxns XferAsset
+    intc_0 // 0
+    bytec_0 // "usdc_asa_id"
+    app_global_get_ex
+    assert // check self.usdc_asa_id exists
+    ==
+    assert // wrong asset
+    // smart_contracts/psm/contract.py:119
+    // assert pay_txn.asset_receiver == Global.current_application_address, "wrong receiver"
+    dup
+    gtxns AssetReceiver
+    global CurrentApplicationAddress
+    ==
+    assert // wrong receiver
+    // smart_contracts/psm/contract.py:120
+    // assert pay_txn.asset_amount == amount, "amount mismatch"
+    gtxns AssetAmount
+    dig 1
+    ==
+    assert // amount mismatch
+    // smart_contracts/psm/contract.py:122-123
+    // # PSM must hold enough mUSD reserve to issue.
+    // assert self._psm_musd_balance() >= amount, "insufficient mUSD reserve"
+    callsub _psm_musd_balance
+    dig 1
+    >=
+    assert // insufficient mUSD reserve
+    // smart_contracts/psm/contract.py:125-130
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.musd_asa_id.value,
+    //     asset_receiver=Txn.sender,
+    //     asset_amount=amount,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // smart_contracts/psm/contract.py:126
+    // xfer_asset=self.musd_asa_id.value,
+    intc_0 // 0
+    bytec_1 // "musd_asa_id"
+    app_global_get_ex
+    assert // check self.musd_asa_id exists
+    // smart_contracts/psm/contract.py:127
+    // asset_receiver=Txn.sender,
+    txn Sender
+    uncover 2
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // smart_contracts/psm/contract.py:125
+    // itxn.AssetTransfer(
+    intc_3 // axfer
+    itxn_field TypeEnum
+    // smart_contracts/psm/contract.py:129
+    // fee=0,
+    intc_0 // 0
+    itxn_field Fee
+    // smart_contracts/psm/contract.py:125-130
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.musd_asa_id.value,
+    //     asset_receiver=Txn.sender,
+    //     asset_amount=amount,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+    // smart_contracts/psm/contract.py:105
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.redeem_musd[routing]() -> void:
+redeem_musd:
+    // smart_contracts/psm/contract.py:132
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:142
+    // assert amount > UInt64(0), "amount must be > 0"
+    dup
+    assert // amount must be > 0
+    // smart_contracts/psm/contract.py:143
+    // assert self.treasury_address, "treasury not set"
+    intc_0 // 0
+    bytec_3 // "treasury_address"
+    app_global_get_ex
+    bury 1
+    assert // treasury not set
+    // smart_contracts/psm/contract.py:145-146
+    // # Verify the outer mUSD deposit.
+    // musd_xfer = op.Txn.group_index - UInt64(1)
+    txn GroupIndex
+    intc_1 // 1
+    -
+    // smart_contracts/psm/contract.py:147
+    // musd_txn = gtxn.AssetTransferTransaction(musd_xfer)
+    dup
+    gtxns TypeEnum
+    intc_3 // axfer
+    ==
+    assert // transaction type is axfer
+    // smart_contracts/psm/contract.py:148
+    // assert musd_txn.xfer_asset == Asset(self.musd_asa_id.value), "wrong asset"
+    dup
+    gtxns XferAsset
+    intc_0 // 0
+    bytec_1 // "musd_asa_id"
+    app_global_get_ex
+    assert // check self.musd_asa_id exists
+    ==
+    assert // wrong asset
+    // smart_contracts/psm/contract.py:149
+    // assert musd_txn.asset_receiver == Global.current_application_address, "wrong receiver"
+    dup
+    gtxns AssetReceiver
+    global CurrentApplicationAddress
+    ==
+    assert // wrong receiver
+    // smart_contracts/psm/contract.py:150
+    // assert musd_txn.asset_amount == amount, "amount mismatch"
+    gtxns AssetAmount
+    dig 1
+    ==
+    assert // amount mismatch
+    // smart_contracts/psm/contract.py:152
+    // fee_bps = self.redeem_fee_bps.value
+    intc_0 // 0
+    bytec_2 // "redeem_fee_bps"
+    app_global_get_ex
+    assert // check self.redeem_fee_bps exists
+    // smart_contracts/psm/contract.py:153
+    // usdc_out = self._wide_ratio(amount, UInt64(10_000) - fee_bps, UInt64(10_000))
+    pushint 10000
+    swap
+    -
+    // smart_contracts/psm/contract.py:100
+    // high, low = op.mulw(a, b)
+    dig 1
+    mulw
+    // smart_contracts/psm/contract.py:153
+    // usdc_out = self._wide_ratio(amount, UInt64(10_000) - fee_bps, UInt64(10_000))
+    pushint 10000
+    // smart_contracts/psm/contract.py:101
+    // return op.divw(high, low, c)
+    divw
+    // smart_contracts/psm/contract.py:154
+    // assert usdc_out > UInt64(0), "amount too small (dust guard)"
+    dup
+    assert // amount too small (dust guard)
+    // smart_contracts/psm/contract.py:156-157
+    // # PSM must hold enough USDC to cover both user payout and treasury fee.
+    // assert self._psm_usdc_balance() >= amount, "insufficient USDC reserve"
+    callsub _psm_usdc_balance
+    dig 2
+    >=
+    assert // insufficient USDC reserve
+    // smart_contracts/psm/contract.py:159-165
+    // # Send USDC to caller.
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.usdc_asa_id.value,
+    //     asset_receiver=Txn.sender,
+    //     asset_amount=usdc_out,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // smart_contracts/psm/contract.py:161
+    // xfer_asset=self.usdc_asa_id.value,
+    intc_0 // 0
+    bytec_0 // "usdc_asa_id"
+    app_global_get_ex
+    assert // check self.usdc_asa_id exists
+    // smart_contracts/psm/contract.py:162
+    // asset_receiver=Txn.sender,
+    txn Sender
+    dig 2
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // smart_contracts/psm/contract.py:159-160
+    // # Send USDC to caller.
+    // itxn.AssetTransfer(
+    intc_3 // axfer
+    itxn_field TypeEnum
+    // smart_contracts/psm/contract.py:164
+    // fee=0,
+    intc_0 // 0
+    itxn_field Fee
+    // smart_contracts/psm/contract.py:159-165
+    // # Send USDC to caller.
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.usdc_asa_id.value,
+    //     asset_receiver=Txn.sender,
+    //     asset_amount=usdc_out,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+    // smart_contracts/psm/contract.py:167-168
+    // # Send fee to treasury if non-zero (AUD-036: skip 0-amount transfer).
+    // fee_out = amount - usdc_out
+    -
+    dup
+    // smart_contracts/psm/contract.py:169
+    // if fee_out > UInt64(0):
+    bz redeem_musd_after_if_else@5
+    // smart_contracts/psm/contract.py:170-175
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.usdc_asa_id.value,
+    //     asset_receiver=self.treasury_address.value,
+    //     asset_amount=fee_out,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // smart_contracts/psm/contract.py:171
+    // xfer_asset=self.usdc_asa_id.value,
+    intc_0 // 0
+    bytec_0 // "usdc_asa_id"
+    app_global_get_ex
+    assert // check self.usdc_asa_id exists
+    // smart_contracts/psm/contract.py:172
+    // asset_receiver=self.treasury_address.value,
+    intc_0 // 0
+    bytec_3 // "treasury_address"
+    app_global_get_ex
+    assert // check self.treasury_address exists
+    dig 2
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // smart_contracts/psm/contract.py:170
+    // itxn.AssetTransfer(
+    intc_3 // axfer
+    itxn_field TypeEnum
+    // smart_contracts/psm/contract.py:174
+    // fee=0,
+    intc_0 // 0
+    itxn_field Fee
+    // smart_contracts/psm/contract.py:170-175
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.usdc_asa_id.value,
+    //     asset_receiver=self.treasury_address.value,
+    //     asset_amount=fee_out,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+
+redeem_musd_after_if_else@5:
+    // smart_contracts/psm/contract.py:132
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.issue_musd[routing]() -> void:
+issue_musd:
+    // smart_contracts/psm/contract.py:179
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    txna ApplicationArgs 2
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:187
+    // assert amount > UInt64(0), "amount must be > 0"
+    dup
+    assert // amount must be > 0
+    // smart_contracts/psm/contract.py:188
+    // self._assert_vault_caller()
+    callsub _assert_vault_caller
+    // smart_contracts/psm/contract.py:190
+    // circulating = self._circulating_musd()
+    callsub _circulating_musd
+    // smart_contracts/psm/contract.py:191
+    // usdc_bal = self._psm_usdc_balance()
+    callsub _psm_usdc_balance
+    // smart_contracts/psm/contract.py:192
+    // assert circulating + amount <= usdc_bal, "exceeds vault ceiling"
+    swap
+    dig 2
+    +
+    >=
+    assert // exceeds vault ceiling
+    // smart_contracts/psm/contract.py:194-199
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.musd_asa_id.value,
+    //     asset_receiver=recipient,
+    //     asset_amount=amount,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // smart_contracts/psm/contract.py:195
+    // xfer_asset=self.musd_asa_id.value,
+    intc_0 // 0
+    bytec_1 // "musd_asa_id"
+    app_global_get_ex
+    assert // check self.musd_asa_id exists
+    itxn_field XferAsset
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    // smart_contracts/psm/contract.py:194
+    // itxn.AssetTransfer(
+    intc_3 // axfer
+    itxn_field TypeEnum
+    // smart_contracts/psm/contract.py:198
+    // fee=0,
+    intc_0 // 0
+    itxn_field Fee
+    // smart_contracts/psm/contract.py:194-199
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.musd_asa_id.value,
+    //     asset_receiver=recipient,
+    //     asset_amount=amount,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+    // smart_contracts/psm/contract.py:179
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.receive_musd[routing]() -> void:
+receive_musd:
+    // smart_contracts/psm/contract.py:201
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:212
+    // assert amount > UInt64(0), "amount must be > 0"
+    assert // amount must be > 0
+    // smart_contracts/psm/contract.py:213
+    // self._assert_vault_caller()
+    callsub _assert_vault_caller
+    // smart_contracts/psm/contract.py:201
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.deposit_usdc[routing]() -> void:
+deposit_usdc:
+    // smart_contracts/psm/contract.py:219
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:226
+    // assert Txn.sender == Global.creator_address, "admin only"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // admin only
+    // smart_contracts/psm/contract.py:227
+    // assert amount > UInt64(0), "amount must be > 0"
+    dup
+    assert // amount must be > 0
+    // smart_contracts/psm/contract.py:229
+    // usdc_xfer = op.Txn.group_index - UInt64(1)
+    txn GroupIndex
+    intc_1 // 1
+    -
+    // smart_contracts/psm/contract.py:230
+    // pay_txn = gtxn.AssetTransferTransaction(usdc_xfer)
+    dup
+    gtxns TypeEnum
+    intc_3 // axfer
+    ==
+    assert // transaction type is axfer
+    // smart_contracts/psm/contract.py:231
+    // assert pay_txn.xfer_asset == Asset(self.usdc_asa_id.value), "wrong asset"
+    dup
+    gtxns XferAsset
+    intc_0 // 0
+    bytec_0 // "usdc_asa_id"
+    app_global_get_ex
+    assert // check self.usdc_asa_id exists
+    ==
+    assert // wrong asset
+    // smart_contracts/psm/contract.py:232
+    // assert pay_txn.asset_receiver == Global.current_application_address, "wrong receiver"
+    dup
+    gtxns AssetReceiver
+    global CurrentApplicationAddress
+    ==
+    assert // wrong receiver
+    // smart_contracts/psm/contract.py:233
+    // assert pay_txn.asset_amount == amount, "amount mismatch"
+    gtxns AssetAmount
+    ==
+    assert // amount mismatch
+    // smart_contracts/psm/contract.py:219
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.withdraw_usdc[routing]() -> void:
+withdraw_usdc:
+    // smart_contracts/psm/contract.py:235
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:243
+    // assert Txn.sender == Global.creator_address, "admin only"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // admin only
+    // smart_contracts/psm/contract.py:244
+    // assert amount > UInt64(0), "amount must be > 0"
+    dup
+    assert // amount must be > 0
+    // smart_contracts/psm/contract.py:246
+    // usdc_bal = self._psm_usdc_balance()
+    callsub _psm_usdc_balance
+    // smart_contracts/psm/contract.py:247
+    // circulating = self._circulating_musd()
+    callsub _circulating_musd
+    // smart_contracts/psm/contract.py:248
+    // assert usdc_bal >= circulating + amount, "would break invariant"
+    dig 2
+    +
+    >=
+    assert // would break invariant
+    // smart_contracts/psm/contract.py:250-255
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.usdc_asa_id.value,
+    //     asset_receiver=Global.creator_address,
+    //     asset_amount=amount,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // smart_contracts/psm/contract.py:251
+    // xfer_asset=self.usdc_asa_id.value,
+    intc_0 // 0
+    bytec_0 // "usdc_asa_id"
+    app_global_get_ex
+    assert // check self.usdc_asa_id exists
+    // smart_contracts/psm/contract.py:252
+    // asset_receiver=Global.creator_address,
+    global CreatorAddress
+    uncover 2
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // smart_contracts/psm/contract.py:250
+    // itxn.AssetTransfer(
+    intc_3 // axfer
+    itxn_field TypeEnum
+    // smart_contracts/psm/contract.py:254
+    // fee=0,
+    intc_0 // 0
+    itxn_field Fee
+    // smart_contracts/psm/contract.py:250-255
+    // itxn.AssetTransfer(
+    //     xfer_asset=self.usdc_asa_id.value,
+    //     asset_receiver=Global.creator_address,
+    //     asset_amount=amount,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+    // smart_contracts/psm/contract.py:235
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.set_redeem_fee[routing]() -> void:
+set_redeem_fee:
+    // smart_contracts/psm/contract.py:257
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:260
+    // assert Txn.sender == Global.creator_address, "admin only"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // admin only
+    // smart_contracts/psm/contract.py:261
+    // assert fee_bps <= UInt64(500), "max fee 500 bps"
+    dup
+    pushint 500
+    <=
+    assert // max fee 500 bps
+    // smart_contracts/psm/contract.py:262
+    // self.redeem_fee_bps.value = fee_bps
+    bytec_2 // "redeem_fee_bps"
+    swap
+    app_global_put
+    // smart_contracts/psm/contract.py:257
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.set_treasury[routing]() -> void:
+set_treasury:
+    // smart_contracts/psm/contract.py:264
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    pushint 32
+    ==
+    assert // invalid number of bytes for arc4.static_array<arc4.uint8, 32>
+    // smart_contracts/psm/contract.py:267
+    // assert Txn.sender == Global.creator_address, "admin only"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // admin only
+    // smart_contracts/psm/contract.py:268
+    // assert address != Global.zero_address, "zero address not allowed"
+    dup
+    global ZeroAddress
+    !=
+    assert // zero address not allowed
+    // smart_contracts/psm/contract.py:269
+    // self.treasury_address.value = address
+    bytec_3 // "treasury_address"
+    swap
+    app_global_put
+    // smart_contracts/psm/contract.py:264
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.set_vault_contract[routing]() -> void:
+set_vault_contract:
+    // smart_contracts/psm/contract.py:271
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:274
+    // assert Txn.sender == Global.creator_address, "admin only"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // admin only
+    // smart_contracts/psm/contract.py:275
+    // assert vault_app_id != UInt64(0), "invalid vault app id"
+    dup
+    assert // invalid vault app id
+    // smart_contracts/psm/contract.py:276
+    // self.vault_app_id.value = vault_app_id
+    bytec 4 // "vault_app_id"
+    swap
+    app_global_put
+    // smart_contracts/psm/contract.py:271
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM.opt_in_asset[routing]() -> void:
+opt_in_asset:
+    // smart_contracts/psm/contract.py:278
+    // @arc4.abimethod
+    txna ApplicationArgs 1
+    dup
+    len
+    intc_2 // 8
+    ==
+    assert // invalid number of bytes for arc4.uint64
+    btoi
+    // smart_contracts/psm/contract.py:284
+    // assert Txn.sender == Global.creator_address, "admin only"
+    txn Sender
+    global CreatorAddress
+    ==
+    assert // admin only
+    // smart_contracts/psm/contract.py:285
+    // assert asa_id != UInt64(0), "invalid ASA ID"
+    dup
+    assert // invalid ASA ID
+    // smart_contracts/psm/contract.py:286-291
+    // itxn.AssetTransfer(
+    //     xfer_asset=asa_id,
+    //     asset_receiver=Global.current_application_address,
+    //     asset_amount=0,
+    //     fee=0,
+    // ).submit()
+    itxn_begin
+    // smart_contracts/psm/contract.py:288
+    // asset_receiver=Global.current_application_address,
+    global CurrentApplicationAddress
+    // smart_contracts/psm/contract.py:289
+    // asset_amount=0,
+    intc_0 // 0
+    itxn_field AssetAmount
+    itxn_field AssetReceiver
+    itxn_field XferAsset
+    // smart_contracts/psm/contract.py:286
+    // itxn.AssetTransfer(
+    intc_3 // axfer
+    itxn_field TypeEnum
+    // smart_contracts/psm/contract.py:290
+    // fee=0,
+    intc_0 // 0
+    itxn_field Fee
+    // smart_contracts/psm/contract.py:286-291
+    // itxn.AssetTransfer(
+    //     xfer_asset=asa_id,
+    //     asset_receiver=Global.current_application_address,
+    //     asset_amount=0,
+    //     fee=0,
+    // ).submit()
+    itxn_submit
+    // smart_contracts/psm/contract.py:278
+    // @arc4.abimethod
+    intc_1 // 1
+    return
+
+
+// smart_contracts.psm.contract.PSM._psm_musd_balance() -> uint64:
+_psm_musd_balance:
+    // smart_contracts/psm/contract.py:65
+    // Global.current_application_address, self.musd_asa_id.value
+    global CurrentApplicationAddress
+    intc_0 // 0
+    bytec_1 // "musd_asa_id"
+    app_global_get_ex
+    assert // check self.musd_asa_id exists
+    // smart_contracts/psm/contract.py:64-66
+    // bal, exists = op.AssetHoldingGet.asset_balance(
+    //     Global.current_application_address, self.musd_asa_id.value
+    // )
+    asset_holding_get AssetBalance
+    // smart_contracts/psm/contract.py:67
+    // assert exists, "PSM not opted into mUSD"
+    assert // PSM not opted into mUSD
+    // smart_contracts/psm/contract.py:68
+    // return bal
+    retsub
+
+
+// smart_contracts.psm.contract.PSM._psm_usdc_balance() -> uint64:
+_psm_usdc_balance:
+    // smart_contracts/psm/contract.py:74
+    // Global.current_application_address, self.usdc_asa_id.value
+    global CurrentApplicationAddress
+    intc_0 // 0
+    bytec_0 // "usdc_asa_id"
+    app_global_get_ex
+    assert // check self.usdc_asa_id exists
+    // smart_contracts/psm/contract.py:73-75
+    // bal, exists = op.AssetHoldingGet.asset_balance(
+    //     Global.current_application_address, self.usdc_asa_id.value
+    // )
+    asset_holding_get AssetBalance
+    // smart_contracts/psm/contract.py:76
+    // assert exists, "PSM not opted into USDC"
+    assert // PSM not opted into USDC
+    // smart_contracts/psm/contract.py:77
+    // return bal
+    retsub
+
+
+// smart_contracts.psm.contract.PSM._circulating_musd() -> uint64:
+_circulating_musd:
+    // smart_contracts/psm/contract.py:82
+    // total, exists = op.AssetParamsGet.asset_total(self.musd_asa_id.value)
+    intc_0 // 0
+    bytec_1 // "musd_asa_id"
+    app_global_get_ex
+    assert // check self.musd_asa_id exists
+    asset_params_get AssetTotal
+    // smart_contracts/psm/contract.py:83
+    // assert exists, "mUSD ASA not found"
+    assert // mUSD ASA not found
+    // smart_contracts/psm/contract.py:89
+    // return self._total_musd_supply() - self._psm_musd_balance()
+    callsub _psm_musd_balance
+    -
+    retsub
+
+
+// smart_contracts.psm.contract.PSM._assert_vault_caller() -> void:
+_assert_vault_caller:
+    // smart_contracts/psm/contract.py:94
+    // vault_addr, exists = op.AppParamsGet.app_address(self.vault_app_id.value)
+    intc_0 // 0
+    bytec 4 // "vault_app_id"
+    app_global_get_ex
+    assert // check self.vault_app_id exists
+    app_params_get AppAddress
+    // smart_contracts/psm/contract.py:95
+    // assert exists, "vault app not found"
+    assert // vault app not found
+    // smart_contracts/psm/contract.py:96
+    // assert Txn.sender == vault_addr, "caller is not registered vault"
+    txn Sender
+    ==
+    assert // caller is not registered vault
+    retsub
