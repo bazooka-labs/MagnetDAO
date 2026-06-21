@@ -54,7 +54,7 @@ export function TokenTradeModal({ price, holders, tvl }: Props) {
       {/* Modal */}
       {open && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-20"
           onClick={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
         >
           {/* Backdrop */}
