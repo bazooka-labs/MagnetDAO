@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Magnet, Landmark } from "lucide-react";
+import { Magnet, Landmark, Wheat } from "lucide-react";
 import dynamic from "next/dynamic";
 
 const LandingHeader = dynamic(
@@ -184,6 +184,26 @@ export default async function LandingPage() {
             >
               Launch App
             </Link>
+          </div>
+
+          {/* Magnet Farms */}
+          <div className="relative w-full rounded-xl border border-white/10 bg-black/50 backdrop-blur-sm overflow-hidden flex items-center gap-5 px-6 py-5 shadow-xl shadow-black/50 hover:shadow-magnet-900/30 hover:-translate-y-0.5 transition-all duration-200">
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-magnet-500/60 to-transparent" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-magnet-600 to-magnet-800 shrink-0">
+              <Wheat className="h-7 w-7 text-white drop-shadow-lg" />
+            </div>
+            <div className="flex-1 text-left">
+              <p className="text-base font-semibold text-white">Magnet Farms</p>
+              <p className="text-sm text-gray-400">Earn yield by providing liquidity on Algorand</p>
+            </div>
+            <a
+              href="https://app.tinyman.org/pool/AIR4CSC54U33WCX4JTMJA4X6PHBVG7OGX7XVV2MCACYSSDULZNJ2KNGRZI"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 rounded-lg bg-gradient-to-r from-magnet-600 to-magnet-500 px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-magnet-900/60 hover:from-magnet-500 hover:to-magnet-400 hover:shadow-lg hover:shadow-magnet-700/40 transition-all duration-150"
+            >
+              Rewards
+            </a>
           </div>
 
           {/* $U Token */}
