@@ -2,15 +2,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { Magnet, Landmark } from "lucide-react";
 import dynamic from "next/dynamic";
-import { VestigeChart } from "@/components/VestigeChart";
-
-const HaystackSwap = dynamic(
-  () => import("@/components/HaystackSwap").then((m) => m.HaystackSwap),
-  { ssr: false, loading: () => <div className="rounded-xl border border-white/10 bg-black/50 h-64 animate-pulse" /> }
-);
 
 const LandingHeader = dynamic(
   () => import("@/components/LandingHeader").then((m) => m.LandingHeader),
+  { ssr: false }
+);
+
+const TokenTradeModal = dynamic(
+  () => import("@/components/TokenTradeModal").then((m) => m.TokenTradeModal),
   { ssr: false }
 );
 
@@ -83,18 +82,6 @@ async function fetchTVL(): Promise<string> {
   }
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="relative rounded-xl border border-white/10 bg-black/50 backdrop-blur-sm p-5 text-center shadow-lg shadow-black/40">
-      <div className="absolute inset-x-0 top-0 h-px rounded-t-xl bg-gradient-to-r from-transparent via-magnet-500/60 to-transparent" />
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-2">{label}</p>
-      <p className="text-2xl font-bold text-white" style={{ textShadow: "0 0 20px rgba(168,85,247,0.5)" }}>
-        {value}
-      </p>
-      {sub && <p className="mt-1 text-xs text-gray-500">{sub}</p>}
-    </div>
-  );
-}
 
 export default async function LandingPage() {
   const [holders, price, tvl] = await Promise.all([
@@ -199,21 +186,9 @@ export default async function LandingPage() {
             </Link>
           </div>
 
-        </div>
+          {/* $U Token */}
+          <TokenTradeModal price={price} holders={holders} tvl={tvl} />
 
-        {/* Stats grid */}
-        <div className="w-full grid grid-cols-1 gap-3 sm:grid-cols-3 mb-5">
-          <StatCard label="$U Price" value={price} sub="USDC" />
-          <StatCard label="$U Holders" value={holders} sub="Active wallets" />
-          <StatCard label="Total TVL" value={tvl} sub="$U pools via Vestige" />
-        </div>
-
-        {/* Chart */}
-        <VestigeChart />
-
-        {/* Swap — full width, centered */}
-        <div className="w-full mt-8">
-          <HaystackSwap />
         </div>
 
       </div>
