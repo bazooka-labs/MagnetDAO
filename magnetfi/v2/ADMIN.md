@@ -288,7 +288,13 @@ Order matters — do not skip steps or reorder.
 - If health factor crosses 1.0: trigger `trigger_partial_liquidation()` or `trigger_full_liquidation()` (per tier) promptly to minimize potential shortfall
 - LP redemption should happen in the same session (same day) as seizure to minimize price exposure
 
-**Admin wallet compromised:**
-- Contracts have no admin rotation mechanism at v2 (admin = Global.creator_address; immutable)
-- Mitigation at v2: hardware wallet substantially reduces compromise risk
-- Future: implement `transfer_admin()` function in all contracts before significant TVL
+**Admin (hot key) compromised:** — follow the guardian incident playbook (see Guardian Wallet section)
+1. Guardian `pause()` on Vault and PSM to halt new borrowing / minting
+2. Guardian `cancel_pending_lp_oracle()` (Vault) and `cancel_pending_vault_contract()` (PSM) if any timelocked repoint is queued
+3. Guardian `propose_admin(clean_key)` on all three contracts; the clean key calls `accept_admin()` on each (this also auto-clears any pending repoint)
+4. Rotate the oracle bot key via the new admin (`set_authorized_updater`) if it shares infrastructure
+5. Guardian `unpause()` once clean
+- The hot key alone cannot drain funds: the catastrophic oracle/vault repoints are timelocked 48h and guardian-cancellable, and the guardian holds unpause. Hardware wallet for the hot key further reduces compromise risk.
+
+**Guardian (cold key) compromised:** — lower severity; the guardian cannot move funds or change parameters, only pause and veto
+- A compromised guardian can grief by pausing (admin cannot unpause). Mitigation: admin `propose_guardian(clean_cold_key)` is not available (guardian-only) — so recovery requires the guardian's own `propose_guardian`/`accept_guardian`. **Therefore the guardian must be a robust cold multisig (2-of-3) so a single signer compromise does not lose the role.** This is why the guardian is specified as a multisig, not a single key.

@@ -74,7 +74,7 @@ The LP oracle is a separate contract from the v1 price oracle. It stores one pri
 
 ### Admin Sender Assertion
 
-All admin methods must include as their **first assertion**: `Assert Txn.sender == Global.creator_address`
+All admin methods must include as their **first assertion**: `Assert Txn.sender == admin`
 
 ---
 
@@ -97,7 +97,7 @@ All admin methods must include as their **first assertion**: `Assert Txn.sender 
 - Vault must assert `lp_price_[pool_id] > 0` after reading — a never-initialized pool returns 0; the freshness check alone (timestamp=0 ≫ freshness window) is the primary guard but an explicit price > 0 check adds clarity
 
 **`set_authorized_updater(new_address)`** — admin only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `new_address != ZeroAddress` — setting authorized_updater to ZeroAddress permanently bricks the oracle; no price can ever be posted again
 3. Update `authorized_updater`
 
@@ -119,7 +119,7 @@ All admin methods must include as their **first assertion**: `Assert Txn.sender 
 **Role management:** `deploy(guardian)` sets admin = deployer, guardian = the passed cold key. 2-step rotation via `propose_admin`/`accept_admin` (admin or guardian proposes) and `propose_guardian`/`accept_guardian`.
 
 **`remove_pool(pool_id)`** — admin only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Remove `pool_id` from supported whitelist
 3. Clear `lp_price_[pool_id]` and `lp_last_updated_[pool_id]`
 

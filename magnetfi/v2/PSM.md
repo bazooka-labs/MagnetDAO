@@ -162,28 +162,28 @@ Not `Txn.sender == vault_app_id` — that compares an address to a uint64, which
 
 ### Admin Methods (admin wallet only)
 
-All admin methods must include as their **first assertion**: `Assert Txn.sender == Global.creator_address`
+All admin methods must include as their **first assertion**: `Assert Txn.sender == admin`
 
 **`deposit_usdc(amount)`** — atomic group: AppCall + AssetTransfer (USDC)
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert AssetTransfer ASA ID = `usdc_asa_id`, receiver = PSM address, amount > 0
 3. USDC lands in PSM; vault ceiling grows by `amount`; no further action required
 4. `flat_fee=true, fee=1000`
 
 **`withdraw_usdc(amount)`** — AppCall only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `amount > 0`
 3. Assert `psm_usdc_balance ≥ circulating_musd + amount` — rewritten to avoid uint64 underflow; equivalent to "cannot reduce below outstanding mUSD"
 4. Inner transaction: transfer `amount` USDC to admin wallet
 5. `flat_fee=true, fee=2000`
 
 **`set_redeem_fee(fee_bps)`** — AppCall only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `fee_bps ≤ 500` (max 5% on-chain cap)
 3. Update `redeem_fee_bps`; takes effect on next redemption
 
 **`set_treasury(address)`** — AppCall only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `address != ZeroAddress`
 3. Update `treasury_address`
 
@@ -241,6 +241,6 @@ The only scenario requiring admin attention is growing the vault ceiling intenti
 
 **PSM USDC is non-yielding:** USDC held in PSM earns nothing passively. Revenue comes only from redemption fees routed to treasury. Future versions could deploy idle PSM USDC into low-risk yield strategies — not v2 scope.
 
-**Single vault contract:** `issue_musd()` and `receive_musd()` are gated to one registered vault app ID. If a second vault contract is deployed, `set_vault_contract()` would need to extend to a list.
+**Single vault contract:** `issue_musd()` and `receive_musd()` are gated to one registered vault app ID (set via the timelocked `propose_vault_contract`/`confirm_vault_contract` flow). If a second vault contract is deployed, the registration would need to extend to a list.
 
 **Redemption fee is admin-adjustable:** 1% is the starting fee. Admin can reduce to 0% during bootstrapping to minimize friction, or adjust upward. On-chain cap of 5% prevents the fee from becoming a peg-maintenance barrier.

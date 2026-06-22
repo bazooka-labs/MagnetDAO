@@ -164,7 +164,7 @@ Fee: without vault closure: `flat_fee=true, fee=2000` (outer + PSM.receive_musd 
 **Fee collection:**
 
 `collect_fees()` — admin wallet only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `accumulated_fees > 0`
 3. Inner transaction: transfer `accumulated_fees` mUSD to admin wallet
 4. Zero `accumulated_fees`
@@ -313,30 +313,30 @@ Seized LP, swept fees, and swept ALGO route to the **current** `admin` (so rotat
 
 ## Rate and Parameter Management Methods
 
-All methods in this section require `Assert Txn.sender == Global.creator_address`.
+All methods in this section require `Assert Txn.sender == admin`.
 
 **`set_rate(pool_id, rate_bps)`**
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `pool_id` is in supported pool whitelist
 3. Assert `rate_bps ≤ 3000` — on-chain cap: 30% APR maximum; prevents a compromised admin key from setting rates that make all vaults instantly delinquent
 4. Update `rate_bps_[pool_id]`; affects only vaults opened AFTER this call (existing vaults have rate locked at open time)
 
 **`set_ltv(pool_id, ltv_bps)`**
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `pool_id` is in supported pool whitelist
 3. Assert `ltv_bps < liq_threshold_bps_[pool_id]` — LTV must stay below liquidation threshold; if equal or above, borrowers at max LTV would be immediately health-liquidatable
 4. Assert `ltv_bps > 0`
 5. Update `ltv_bps_[pool_id]`; affects only new borrows and `borrow_more()` calls; existing vault positions are not forcibly reduced
 
 **`set_liq_threshold(pool_id, threshold_bps)`**
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `pool_id` is in supported pool whitelist
 3. Assert `threshold_bps > ltv_bps_[pool_id]` — threshold must exceed LTV; violation means borrowers at max LTV have HF < 1.0 upon origination, making them instantly liquidatable
 4. Assert `threshold_bps ≤ 9000` — cap at 90%; setting above this makes the liquidation trigger fire before meaningful overcollateralization exists
 5. Update `liq_threshold_bps_[pool_id]`
 
 **`set_lp_asa_id(pool_id, lp_asa_id)`**
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `pool_id` is in supported pool whitelist
 3. Update `lp_asa_id_[pool_id]` — the LP token ASA ID used in `open_vault()` and `add_collateral()` type checks
 
@@ -356,7 +356,7 @@ Admin procedure before proposing: audit the new oracle contract; verify its devi
 3. Purpose: catch up interest on a multi-year-abandoned vault (a delinquent borrower won't trigger accrual themselves); call repeatedly to advance in annual increments before liquidating (P19-13)
 
 **`collect_algo(amount)`** — admin wallet only
-1. Assert `Txn.sender == Global.creator_address`
+1. Assert `Txn.sender == admin`
 2. Assert `amount > 0`
 3. Inner transaction: Payment of `amount` ALGO to admin wallet
 
