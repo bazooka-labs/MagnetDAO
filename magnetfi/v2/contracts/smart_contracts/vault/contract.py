@@ -203,6 +203,10 @@ class Vault(
         key = self._vault_key(Txn.sender, pool_id)
         assert key not in self.vaults, "vault already exists"
 
+        # This AppCall must be sandwiched: MBR payment at index-1, LP transfer at index+1.
+        assert op.Txn.group_index >= UInt64(1), "open_vault not preceded by MBR payment"
+        assert op.Txn.group_index + UInt64(1) < Global.group_size, "open_vault not followed by LP transfer"
+
         # Verify MBR payment in preceding txn.
         mbr_pay = gtxn.PaymentTransaction(op.Txn.group_index - UInt64(1))
         assert mbr_pay.receiver == Global.current_application_address, "wrong MBR receiver"
@@ -269,6 +273,7 @@ class Vault(
         vault = self._lazy_overdue_check(vault)
         assert vault.vault_state.native != UInt64(2), "vault in liquidation"
 
+        assert op.Txn.group_index + UInt64(1) < Global.group_size, "missing mUSD payment txn"
         musd_xfer = gtxn.AssetTransferTransaction(op.Txn.group_index + UInt64(1))
         assert musd_xfer.xfer_asset == Asset(self.musd_asa_id.value), "wrong asset"
         assert musd_xfer.asset_receiver == Global.current_application_address, "wrong receiver"
@@ -343,6 +348,7 @@ class Vault(
         assert vault.vault_state.native != UInt64(2), "vault in liquidation"
 
         psm_addr = self._psm_address()
+        assert op.Txn.group_index + UInt64(1) < Global.group_size, "missing mUSD repayment txn"
         musd_xfer = gtxn.AssetTransferTransaction(op.Txn.group_index + UInt64(1))
         assert musd_xfer.xfer_asset == Asset(self.musd_asa_id.value), "wrong asset"
         assert musd_xfer.asset_receiver == psm_addr, "mUSD must go to PSM"
@@ -399,6 +405,7 @@ class Vault(
         assert vault.vault_state.native != UInt64(2), "vault in liquidation"
 
         lp_asa_id = self._pool_lp_asa(vault.lp_pool_id.native)
+        assert op.Txn.group_index + UInt64(1) < Global.group_size, "missing LP deposit txn"
         lp_xfer = gtxn.AssetTransferTransaction(op.Txn.group_index + UInt64(1))
         assert lp_xfer.xfer_asset == Asset(lp_asa_id), "wrong LP token"
         assert lp_xfer.asset_receiver == Global.current_application_address, "wrong receiver"
@@ -450,11 +457,22 @@ class Vault(
         assert Txn.sender == Global.creator_address, "admin only"
         fees = self.accumulated_fees.value
         assert fees > UInt64(0), "no fees"
-        self.accumulated_fees.value = UInt64(0)
+
+        # Clamp to the vault's actual mUSD balance. The counter should always be
+        # backed 1:1 by mUSD received via pay_interest, but clamping guarantees a
+        # phantom-fee entry can never brick collection (defense-in-depth).
+        bal, exists = op.AssetHoldingGet.asset_balance(
+            Global.current_application_address, self.musd_asa_id.value
+        )
+        assert exists, "vault not opted into mUSD"
+        sweep = fees if fees <= bal else bal
+        assert sweep > UInt64(0), "no mUSD balance to sweep"
+
+        self.accumulated_fees.value = fees - sweep
         itxn.AssetTransfer(
             xfer_asset=self.musd_asa_id.value,
             asset_receiver=Global.creator_address,
-            asset_amount=fees,
+            asset_amount=sweep,
             fee=0,
         ).submit()
 
@@ -716,6 +734,7 @@ class Vault(
         assert vault.vault_state.native == UInt64(2), "vault not in liquidation"
 
         psm_addr = self._psm_address()
+        assert op.Txn.group_index + UInt64(1) < Global.group_size, "missing mUSD settlement txn"
         musd_xfer = gtxn.AssetTransferTransaction(op.Txn.group_index + UInt64(1))
         assert musd_xfer.xfer_asset == Asset(self.musd_asa_id.value), "wrong asset"
         assert musd_xfer.asset_receiver == psm_addr, "mUSD must go to PSM"

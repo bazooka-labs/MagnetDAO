@@ -837,3 +837,72 @@ Complete independent re-read of all 7 content .md files after Pass 14 fixes. 3 n
 **[AUD-097] 🟢 `pay_interest()` and `repay_principal()` method specs missing inline lazy check annotations**
 - Pass 14 (AUD-093) added inline lazy check annotations to `borrow_more()` and `add_collateral()`. The "Payment Overdue Transition" section correctly lists all four methods as performing the 90-day lazy check. However, `pay_interest()` (lines 113–133) and `repay_principal()` (lines 140–150) had no inline annotation, creating an inconsistency: two of the four methods documented the check inline, two did not. An implementer reading only the `pay_interest()` or `repay_principal()` sections would not know to add the lazy check.
 - **Fix:** Added "[Lazy check: if `current_timestamp >= last_payment_timestamp + 90 days`, set `vault_state = 1` before any other logic]" annotation before step 1 of both `pay_interest()` and `repay_principal()`. VAULT.md updated.
+
+---
+
+## Pass 16 — Pre-Deploy Contract Implementation Review
+
+First audit pass against the actual Puya/algopy contract implementations (not just the .md specs). Two critical findings, both fixed.
+
+### Critical — Fixed
+
+**[AUD-098] 🟢 `pay_interest()` uint64 underflow on overpayment exceeding principal**
+- In `pay_interest`, after clearing interest, `change = payment − interest_due` was applied to principal as `new_borrowed = musd_borrowed − change`. If a borrower overpaid by more than the outstanding principal, `change > musd_borrowed` and the subtraction underflowed, panicking the transaction (best case) — but the path existed and made full-repayment-with-overshoot unusable.
+- **Fix:** Added `assert change <= vault.musd_borrowed.native, "overpayment exceeds principal"` before the subtraction. `contract.py` (vault) updated.
+
+**[AUD-099] 🟢 Vault and PSM had no `opt_in_asset` method — contracts could not hold any ASA**
+- Neither contract account could opt into mUSD/USDC/LP tokens, so every inner AssetTransfer to the contract (and every issuance) would fail. The protocol was undeployable.
+- **Fix:** Added admin-only `opt_in_asset(asa_id)` to both Vault and PSM (self-transfer of amount 0). ADMIN.md deploy checklist updated to call it for each required ASA before use.
+
+---
+
+## Pass 17 — Full Independent Re-Audit (post AUD-098/099)
+
+Independent agent re-audited contracts + specs. Findings applied:
+
+- **[C-1] 🟢 Deployment deadlock** — `set_ltv` asserts `ltv < liq_threshold`, but ADMIN.md ordered `set_ltv` before `set_liq_threshold` (which returns 0 if unset → assertion always fails). Fixed ADMIN.md order (`set_liq_threshold` first) and added `assert liq != 0, "set liq threshold before ltv"` guard in `set_ltv`.
+- **[C-2] 🟢 Accrue-in-state-2 latent risk** — added early return `if vault.vault_state == 2: return vault` inside `_accrue_interest` so the settlement counter can never be overwritten regardless of caller.
+- **[H-1] 🟢 `trigger_partial_liquidation` underflow** — capped `seized_lp_value` at `total_debt` before `musd_borrowed = total_debt − seized_lp_value`.
+- **[H-3] 🟢 `repay_principal` unusable** — removed the pre-assertion `_accrue_interest` call; now checks the stored `accrued_interest == 0` directly.
+- **[H-4 / H-5] 🟢 Zero-id bricking** — `set_vault_contract` (PSM) and `set_lp_oracle` (vault) now reject `0`.
+- **[M-5] 🟢** `redeem_musd` fee math switched to WideRatio. **[M-6] 🟢** `trigger_full_liquidation` guards `lp_to_seize > 0`. **[L-1] 🟢** PSM `deploy` asserts `musd != usdc`. **[L-2] 🟢** PSM `StateTotals` corrected to `global_bytes=1`. **[L-4] 🟢** removed dead `_pool_is_active` in oracle.
+
+---
+
+## Pass 18 — Fresh Independent Audit (post Pass 17)
+
+Independent agent, full line-by-line. Four real findings fixed; the rest dismissed as non-exploitable on Algorand (group-sender piggybacking impossible without co-signature) or astronomically-bounded.
+
+- **[F-01] 🔴 Critical 🟢 Fixed** — `settle_health_liquidation` had only 3 exit branches but 4 end-states exist. When a partial liquidation seizes LP worth exactly `total_debt` (reachable via the H-1 cap), `musd_borrowed → 0` while `lp_amount > 0`; the vault fell through to the close-branch, **deleting the box and trapping the remaining LP**. Added an explicit fourth branch returning surplus LP to the borrower before closing.
+- **[F-16] 🟠 High 🟢 Fixed** — oracle bot TWAP was a left-Riemann sum excluding the latest reading, and a symmetric divergence guard silenced the bot during genuine price drops (oracle goes stale exactly when liquidations are needed). Switched to trapezoidal TWAP + asymmetric divergence (block spikes only).
+- **[F-17] 🟡 Medium 🟢 Fixed** — `open_vault` could create 0%-interest vaults if `set_lp_asa_id` was called without `set_rate` (unset pool params read as 0). Added `assert pool_rate > 0` at vault creation.
+- **[F-24] 🟢 Fixed** — TWAP state file write made atomic (temp file + rename).
+
+---
+
+## Pass 19 — Deep Security Audit (Opus, post Pass 18)
+
+Senior-auditor deep dive focused on protocol safety. Headline finding verified on-chain against the live Tinyman v2 ALGO/USDC pool before fixing.
+
+### Critical — Fixed
+
+**[P19-01] 🟢 Oracle bot read pool reserves from the wrong on-chain location**
+- The bot called `application_info(pool_app_id)` and read `global-state`. Tinyman v2 has **no per-pool application** — each pool is an account opted into the single shared AMM validator app (mainnet `1002541853`), and its reserves + issued LP live in that account's **local state**. Verified on-chain: the real keys are `asset_1_reserves` / `asset_2_reserves` (already net of protocol fees) and `issued_pool_tokens`. The bot would read nothing → 0 reserves → skip forever (fails closed; no real pool could ever be priced).
+- **Fix:** `fetch_pool_state` now reads the pool **account's local state** via `account_application_info(pool_address, amm_validator_app_id)`; config takes `pool_address` + `amm_validator_app_id`; LP supply read from `issued_pool_tokens`; added on-chain asset-id verification (guards a wrong `pool_address`) and an absolute `min_price`/`max_price` sanity bound (the on-chain ±50% guard only bounds *relative* movement). `oracle_bot.py` + `config.json` updated.
+
+### Low — Fixed
+
+- **[P19-05] 🟢** `collect_fees` now clamps the sweep to the vault's actual mUSD balance and decrements the counter by the swept amount — a phantom-fee entry can never brick collection.
+- **[P19-08] 🟢 (doc)** VAULT.md `collect_algo` spec corrected to match the implementation (admin-supplied `amount`, AVM-bounded by the contract's own min balance; fails closed on over-sweep). On-chain excess computation deferred.
+- **[P19-09] 🟢** Added explicit group-bounds asserts before every relative-index `gtxn` access (vault `open_vault`/`pay_interest`/`repay_principal`/`add_collateral`/`settle_health_liquidation`; PSM `mint_musd`/`redeem_musd`/`deposit_usdc`) so edge-of-group composition reverts with a clear message instead of an opaque panic. (Already failed closed; this improves diagnostics.)
+
+### Reviewed — No code change
+
+- **[P19-04] ⚪ Revenue-recognition policy, not a bug** — partial liquidation folds pre-liq accrued interest into `musd_borrowed`; on later repayment it routes to PSM (reducing circulating mUSD / restoring ceiling) rather than to `accumulated_fees`. The auditor's suggested fix (credit `accumulated_fees`) is harmful: there is no backing mUSD in the vault for a partial-liq, so the entry would be unbacked and (post-P19-05) simply un-sweepable. Current behavior is the conservative, solvency-favoring choice — earned interest materializes as higher overcollateralization. **Decision: keep as-is; documented.**
+- **[P19-06] ⚪ Verified safe** — in every `trigger_full_liquidation` branch the settlement counter `musd_to_settle ≤ contract-computed seized value` (surplus case: `surplus_lp` floors → `lp_to_seize` rounds up → seized ≥ total_debt; shortfall case: `musd_to_settle = total_lp_value =` seized exactly). No over-settlement path exists; the "dust" is real-world LP-sale slippage, already documented as operational.
+
+### Deferred — Design decisions (not in this fix pass)
+
+- **[P19-03] 🟠 High (open)** — the on-chain deviation guard bounds only movement vs. the *prior* post, so a compromised bot key can ratchet the price arbitrarily over many updates → over-borrow → bad debt. The "bot compromise = no fund risk" claim in the docs is too strong for the over-borrow direction. Proposed fix: an on-chain admin price anchor with a bounded cumulative-drift guard. **Awaiting design sign-off before implementation.**
+- **[P19-02 / P19-07] 🟡 Medium (open)** — single price-derivation path (spec promises multi-source median + cross-source divergence) and weak thin-history TWAP; add a minimum-readings gate that fails *stale* not *open*.
+- **[P19-10 → P19-13] ⚪ Documented admin-trust items** — timelock on `set_lp_oracle`/`set_vault_contract`, admin rotation, protocol pause, multi-year accrual cap. Accepted for v2 launch; revisit before significant TVL.

@@ -112,7 +112,8 @@ class PSM(
         """
         assert amount > UInt64(0), "amount must be > 0"
 
-        # Verify the outer group contains the correct USDC deposit.
+        # Verify the outer group contains the correct USDC deposit (at index-1).
+        assert op.Txn.group_index >= UInt64(1), "mint_musd not preceded by USDC deposit"
         usdc_xfer = op.Txn.group_index - UInt64(1)
         pay_txn = gtxn.AssetTransferTransaction(usdc_xfer)
         assert pay_txn.xfer_asset == Asset(self.usdc_asa_id.value), "wrong asset"
@@ -142,7 +143,8 @@ class PSM(
         assert amount > UInt64(0), "amount must be > 0"
         assert self.treasury_address, "treasury not set"
 
-        # Verify the outer mUSD deposit.
+        # Verify the outer mUSD deposit (at index-1).
+        assert op.Txn.group_index >= UInt64(1), "redeem_musd not preceded by mUSD deposit"
         musd_xfer = op.Txn.group_index - UInt64(1)
         musd_txn = gtxn.AssetTransferTransaction(musd_xfer)
         assert musd_txn.xfer_asset == Asset(self.musd_asa_id.value), "wrong asset"
@@ -226,6 +228,8 @@ class PSM(
         assert Txn.sender == Global.creator_address, "admin only"
         assert amount > UInt64(0), "amount must be > 0"
 
+        # USDC deposit must be at index-1.
+        assert op.Txn.group_index >= UInt64(1), "deposit_usdc not preceded by USDC deposit"
         usdc_xfer = op.Txn.group_index - UInt64(1)
         pay_txn = gtxn.AssetTransferTransaction(usdc_xfer)
         assert pay_txn.xfer_asset == Asset(self.usdc_asa_id.value), "wrong asset"

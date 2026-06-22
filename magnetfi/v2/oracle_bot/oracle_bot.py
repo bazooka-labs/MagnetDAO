@@ -4,12 +4,15 @@ MagnetFi v2 LP Oracle Bot
 Posts TWAP-smoothed LP token prices to the on-chain LP Oracle contract every 5 minutes.
 
 Price pipeline per pool:
-  1. Fetch underlying asset USD prices from Vestige (fallback: on-chain computation)
-  2. Read pool reserves + LP supply from algod (Tinyman v2 pool global state)
-  3. Compute pool TVL and price per LP token (scaled × 1_000_000)
-  4. Apply 5-reading TWAP (≈25-minute window)
-  5. Run divergence checks (<15% spread across sources)
-  6. Post to oracle contract if all checks pass
+  1. Read pool reserves + issued LP supply from the pool ACCOUNT's local state under
+     the shared Tinyman v2 AMM validator app (NOT a per-pool app's global state)
+  2. Verify the pool's on-chain asset ids match config (guards against wrong pool_address)
+  3. Fetch underlying asset USD prices from Vestige
+  4. Compute pool TVL and price per LP token (scaled × 1_000_000)
+  5. Apply an absolute price sanity bound (min_price/max_price)
+  6. Apply 5-reading trapezoidal TWAP (≈25-minute window)
+  7. Run asymmetric divergence check (block upward spikes; let drops through)
+  8. Post to oracle contract if all checks pass
 
 Usage:
   python oracle_bot.py [--dry-run] [--config config.json]
@@ -50,6 +53,12 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.json"
 STATE_FILE = Path(__file__).parent / "twap_state.json"
 
 VESTIGE_API = "https://api.vestigelabs.io"
+
+# Tinyman v2 AMM validator app — ONE shared app for all pools on mainnet.
+# Each pool is a separate ACCOUNT opted into this app; the pool's reserves and
+# issued-LP supply live in that account's LOCAL state under this app id (NOT in a
+# per-pool application's global state). Override via config "amm_validator_app_id".
+TINYMAN_V2_VALIDATOR_APP_ID = 1002541853
 
 TWAP_WINDOW      = 5       # number of readings for TWAP
 POLL_INTERVAL    = 300     # seconds between updates (5 minutes)
@@ -133,27 +142,31 @@ class TwapState:
 class PoolConfig:
     """Per-pool parameters loaded from config.json."""
     __slots__ = (
-        "pool_id",      # on-chain pool_id (used as BoxMap key in Vault; matches Tinyman pool app id)
-        "pool_app_id",  # Tinyman v2 pool app ID on Algorand
-        "asset_a_id",   # ASA ID of first asset in pool (0 for ALGO)
+        "pool_id",        # arbitrary unique id we assign; matches the pool_id key used in Vault/Oracle
+        "pool_address",   # Tinyman v2 pool ACCOUNT address (holds reserves in local state under the AMM app)
+        "asset_a_id",     # ASA ID of asset_1 in the pool (0 for ALGO) — must match Tinyman asset_1_id
         "asset_a_decimals",
-        "asset_b_id",
+        "asset_b_id",     # ASA ID of asset_2 in the pool — must match Tinyman asset_2_id
         "asset_b_decimals",
-        "label",        # human-readable name e.g. "U/ALGO"
+        "min_price",      # absolute sanity floor (scaled ×1e6); 0 disables
+        "max_price",      # absolute sanity ceiling (scaled ×1e6); 0 disables
+        "label",          # human-readable name e.g. "U/ALGO"
     )
 
     def __init__(self, d: dict) -> None:
         self.pool_id = int(d["pool_id"])
-        self.pool_app_id = int(d["pool_app_id"])
+        self.pool_address = str(d["pool_address"])
         self.asset_a_id = int(d["asset_a_id"])
         self.asset_a_decimals = int(d["asset_a_decimals"])
         self.asset_b_id = int(d["asset_b_id"])
         self.asset_b_decimals = int(d["asset_b_decimals"])
+        self.min_price = int(d.get("min_price", 0))
+        self.max_price = int(d.get("max_price", 0))
         self.label = d.get("label", f"pool_{self.pool_id}")
 
 
-def load_config(path: Path) -> tuple[int, list[PoolConfig]]:
-    """Returns (oracle_app_id, [PoolConfig])."""
+def load_config(path: Path) -> tuple[int, int, list[PoolConfig]]:
+    """Returns (oracle_app_id, amm_validator_app_id, [PoolConfig])."""
     if not path.exists():
         log.error(f"Config file not found: {path}")
         sys.exit(1)
@@ -162,11 +175,12 @@ def load_config(path: Path) -> tuple[int, list[PoolConfig]]:
     if oracle_app_id == 0:
         log.error("oracle_app_id must be set in config.json or ORACLE_APP_ID env var")
         sys.exit(1)
+    amm_app_id = int(raw.get("amm_validator_app_id", TINYMAN_V2_VALIDATOR_APP_ID))
     pools = [PoolConfig(p) for p in raw.get("pools", [])]
     if not pools:
         log.error("No pools configured in config.json")
         sys.exit(1)
-    return oracle_app_id, pools
+    return oracle_app_id, amm_app_id, pools
 
 
 # ── algod client ──────────────────────────────────────────────────────────────
@@ -179,13 +193,21 @@ def make_algod_client() -> algod.AlgodClient:
 
 # ── on-chain pool state ───────────────────────────────────────────────────────
 
-def _decode_pool_state(app_info: dict) -> dict[str, int]:
+def _decode_local_state(account_app_info: dict) -> dict[str, int]:
     """
-    Decode Tinyman v2 pool global state into a flat dict of str → int.
-    Tinyman v2 stores all uint64 values; bytes values are ignored here.
+    Decode a Tinyman v2 pool account's LOCAL state (under the AMM validator app)
+    into a flat dict of str → int. Only uint values are extracted.
+
+    Key fields used here (all uint64, in the pool account's local state):
+      asset_1_reserves     — net tradeable reserve of asset_1 (already excludes protocol fees)
+      asset_2_reserves     — net tradeable reserve of asset_2
+      issued_pool_tokens   — circulating LP token supply (base units)
     """
+    # algosdk returns the local state under "app-local-state" → "key-value".
+    local = account_app_info.get("app-local-state", account_app_info.get("appLocalState", {}))
+    kvs = local.get("key-value", local.get("keyValue", []))
     result: dict[str, int] = {}
-    for item in app_info.get("params", {}).get("global-state", []):
+    for item in kvs:
         key = base64.b64decode(item["key"]).decode("utf-8", errors="replace")
         val = item["value"]
         if val.get("type") == 2:   # uint
@@ -193,12 +215,20 @@ def _decode_pool_state(app_info: dict) -> dict[str, int]:
     return result
 
 
-def fetch_pool_state(client: algod.AlgodClient, pool_app_id: int) -> dict[str, int]:
-    """Read and decode Tinyman v2 pool global state from algod with retry."""
+def fetch_pool_state(
+    client: algod.AlgodClient, pool_address: str, amm_app_id: int
+) -> dict[str, int]:
+    """
+    Read and decode a Tinyman v2 pool's reserves/LP supply from the pool ACCOUNT's
+    local state under the shared AMM validator app, with retry.
+
+    NOTE: Tinyman v2 has no per-pool application. Each pool is an account opted into
+    the single AMM validator app; its state lives in that account's local state.
+    """
     for attempt in range(MAX_RETRIES):
         try:
-            info = client.application_info(pool_app_id)
-            return _decode_pool_state(info)
+            info = client.account_application_info(pool_address, amm_app_id)
+            return _decode_local_state(info)
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
                 raise
@@ -239,16 +269,16 @@ def compute_lp_price(
     """
     Compute LP token price in mUSD, scaled × 1_000_000.
 
-    Tinyman v2 global state keys:
-      asset_1_reserves  → reserve of asset_a
-      asset_2_reserves  → reserve of asset_b
-      lp_asset_total    → total LP token base units outstanding (excluding locked LP)
+    Tinyman v2 pool-account local-state keys:
+      asset_1_reserves    → net tradeable reserve of asset_a (already excludes protocol fees)
+      asset_2_reserves    → net tradeable reserve of asset_b
+      issued_pool_tokens  → circulating LP token base units outstanding
 
     Returns None if pool state is invalid (zero supply, zero reserves).
     """
     reserve_a = pool_state.get("asset_1_reserves", 0)
     reserve_b = pool_state.get("asset_2_reserves", 0)
-    lp_total  = pool_state.get("lp_asset_total", 0)
+    lp_total  = pool_state.get("issued_pool_tokens", 0)
 
     if lp_total == 0:
         log.warning(f"[{pool.label}] zero LP supply — skipping")
@@ -275,20 +305,32 @@ def compute_lp_price(
 def get_lp_price(
     client: algod.AlgodClient,
     pool: PoolConfig,
+    amm_app_id: int,
 ) -> int | None:
     """
     Full price pipeline for a single pool.
 
-    Attempts to fetch prices from Vestige; falls back to on-chain computation
-    for any asset where Vestige returns None.
-
-    Returns the computed LP price (scaled integer) or None if unable to price.
+    Reads reserves + issued LP from the pool account's local state, prices the
+    underlyings via Vestige, computes price-per-LP, and applies an absolute
+    sanity bound. Returns the scaled price or None if it cannot price safely.
     """
     # Fetch pool state first (needed regardless of price source).
     try:
-        pool_state = fetch_pool_state(client, pool.pool_app_id)
+        pool_state = fetch_pool_state(client, pool.pool_address, amm_app_id)
     except Exception as e:
         log.error(f"[{pool.label}] failed to fetch pool state: {e}")
+        return None
+
+    # Defensive: confirm the pool account holds the asset ids we expect. A wrong
+    # pool_address would otherwise produce a plausible-but-wrong price.
+    onchain_a = pool_state.get("asset_1_id", -1)
+    onchain_b = pool_state.get("asset_2_id", -1)
+    if onchain_a != pool.asset_a_id or onchain_b != pool.asset_b_id:
+        log.error(
+            f"[{pool.label}] pool asset mismatch: on-chain "
+            f"asset_1_id={onchain_a} asset_2_id={onchain_b} vs config "
+            f"asset_a={pool.asset_a_id} asset_b={pool.asset_b_id}; refusing to price"
+        )
         return None
 
     # Fetch underlying asset prices from Vestige.
@@ -306,10 +348,23 @@ def get_lp_price(
     if price is None:
         return None
 
+    # Absolute sanity bound — catches catastrophically wrong inputs that the
+    # relative on-chain deviation guard cannot (it only bounds movement vs prior).
+    if pool.min_price > 0 and price < pool.min_price:
+        log.error(
+            f"[{pool.label}] price {price} below sanity floor {pool.min_price}; refusing to post"
+        )
+        return None
+    if pool.max_price > 0 and price > pool.max_price:
+        log.error(
+            f"[{pool.label}] price {price} above sanity ceiling {pool.max_price}; refusing to post"
+        )
+        return None
+
     log.info(
         f"[{pool.label}] reserve_a={pool_state.get('asset_1_reserves')} "
         f"reserve_b={pool_state.get('asset_2_reserves')} "
-        f"lp_total={pool_state.get('lp_asset_total')} "
+        f"issued_lp={pool_state.get('issued_pool_tokens')} "
         f"price_a={price_a:.6f} price_b={price_b:.6f} "
         f"raw_price={price}"
     )
@@ -390,6 +445,7 @@ def post_price(
 def update_pool(
     client: algod.AlgodClient,
     oracle_app_id: int,
+    amm_app_id: int,
     pool: PoolConfig,
     twap: TwapState,
     bot_sk: str,
@@ -399,7 +455,7 @@ def update_pool(
     """Run the full price pipeline for one pool and post to oracle if valid."""
     log.info(f"[{pool.label}] computing price ...")
 
-    spot_price = get_lp_price(client, pool)
+    spot_price = get_lp_price(client, pool, amm_app_id)
     if spot_price is None:
         log.warning(f"[{pool.label}] could not compute price — skipping update")
         return
@@ -453,7 +509,7 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="run once then exit (for cron use)")
     args = parser.parse_args()
 
-    oracle_app_id, pools = load_config(Path(args.config))
+    oracle_app_id, amm_app_id, pools = load_config(Path(args.config))
     client = make_algod_client()
     twap = TwapState(STATE_FILE)
 
@@ -465,6 +521,7 @@ def main() -> None:
     bot_address = account.address_from_private_key(bot_sk)
     log.info(f"Oracle bot wallet: {bot_address}")
     log.info(f"Oracle app ID:     {oracle_app_id}")
+    log.info(f"AMM validator app: {amm_app_id}")
     log.info(f"Pools configured:  {[p.label for p in pools]}")
     if args.dry_run:
         log.info("DRY-RUN mode — no transactions will be submitted")
@@ -473,7 +530,7 @@ def main() -> None:
         for pool in pools:
             try:
                 update_pool(
-                    client, oracle_app_id, pool, twap,
+                    client, oracle_app_id, amm_app_id, pool, twap,
                     bot_sk, bot_address, args.dry_run,
                 )
             except Exception as e:

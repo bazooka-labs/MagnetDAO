@@ -330,12 +330,12 @@ All methods in this section require `Assert Txn.sender == Global.creator_address
 
 **Warning:** this is a high-impact change. A malicious oracle app can post arbitrary prices, enabling over-borrowing or improper liquidations. Admin procedure before calling: audit new oracle contract code; verify deviation guard and authorized updater are correctly configured; run in parallel with old oracle before switching.
 
-**`collect_algo()`** — admin wallet only
+**`collect_algo(amount)`** — admin wallet only
 1. Assert `Txn.sender == Global.creator_address`
-2. Compute `excess_algo = contract_algo_balance − minimum_reserve_algo` where minimum_reserve_algo covers all open vault box MBR payments held by the contract
-3. Assert `excess_algo > 0`
-4. Inner transaction: Payment of `excess_algo` ALGO to admin wallet
-5. `flat_fee=true, fee=2000`
+2. Assert `amount > 0`
+3. Inner transaction: Payment of `amount` ALGO to admin wallet
+
+**Note:** the contract does **not** compute the excess on-chain — the admin supplies `amount`, computed off-chain as `contract_algo_balance − (open_vault_count × 46,500) − buffer`. The AVM is the safety net: any `amount` that would drop the vault's balance below its own minimum-balance requirement (which includes all open vault box MBR) causes the inner Payment to fail and the transaction to revert. A miscalculated sweep therefore fails closed rather than stranding MBR. An on-chain excess computation (requiring an `open_vault_count` global counter) is deferred — see P19-08.
 
 ---
 
