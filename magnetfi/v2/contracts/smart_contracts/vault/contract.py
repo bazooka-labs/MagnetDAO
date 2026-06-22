@@ -113,6 +113,7 @@ class Vault(
         assert musd_asa_id != UInt64(0)
         assert usdc_asa_id != UInt64(0)
         assert guardian != Global.zero_address, "guardian required"
+        assert guardian != Txn.sender, "guardian must differ from admin"
         self.psm_app_id.value = psm_app_id
         self.lp_oracle_app_id.value = lp_oracle_app_id
         self.musd_asa_id.value = musd_asa_id
@@ -207,7 +208,11 @@ class Vault(
         period_interest = self._wide_ratio(annual_interest, seconds_elapsed, UInt64(SECONDS_PER_YEAR))
 
         vault.accrued_interest = arc4.UInt64(vault.accrued_interest.native + period_interest)
-        vault.last_accrual_timestamp = arc4.UInt64(now)
+        # Advance the clock by the CAPPED elapsed time, not to `now` (P21-01). In the
+        # normal <1yr case last_accrual + seconds_elapsed == now (no behavior change). For
+        # multi-year dormancy this leaves the remainder to be charged on the next accrual
+        # call, so no interest is forgiven and advance_accrual genuinely catches up.
+        vault.last_accrual_timestamp = arc4.UInt64(last_accrual + seconds_elapsed)
         return vault
 
     @subroutine
@@ -240,6 +245,7 @@ class Vault(
         """Start 2-step admin rotation. Admin OR guardian (guardian path = recovery)."""
         self._assert_admin_or_guardian()
         assert new_admin != Global.zero_address, "zero address not allowed"
+        assert new_admin != self.guardian.value, "admin must differ from guardian"
         self.pending_admin.value = new_admin
 
     @arc4.abimethod
@@ -249,12 +255,17 @@ class Vault(
         assert Txn.sender == self.pending_admin.value, "not pending admin"
         self.admin.value = self.pending_admin.value
         self.pending_admin.value = Global.zero_address
+        # Clear any queued oracle repoint so a change proposed by the prior admin can't
+        # be confirmed by the new one unaware of its provenance (P21-04).
+        self.pending_lp_oracle.value = UInt64(0)
+        self.pending_lp_oracle_eta.value = UInt64(0)
 
     @arc4.abimethod
     def propose_guardian(self, new_guardian: Account) -> None:
         """Start 2-step guardian rotation. Guardian only."""
         self._assert_guardian()
         assert new_guardian != Global.zero_address, "zero address not allowed"
+        assert new_guardian != self.admin.value, "guardian must differ from admin"
         self.pending_guardian.value = new_guardian
 
     @arc4.abimethod

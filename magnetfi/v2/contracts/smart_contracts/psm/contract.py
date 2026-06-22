@@ -76,6 +76,7 @@ class PSM(
         assert usdc_asa_id != UInt64(0), "usdc_asa_id required"
         assert musd_asa_id != usdc_asa_id, "musd and usdc must be different assets"
         assert guardian != Global.zero_address, "guardian required"
+        assert guardian != Txn.sender, "guardian must differ from admin"
         self.musd_asa_id.value = musd_asa_id
         self.usdc_asa_id.value = usdc_asa_id
         self.redeem_fee_bps.value = UInt64(100)  # 1% default
@@ -156,6 +157,7 @@ class PSM(
         """
         self._assert_admin_or_guardian()
         assert new_admin != Global.zero_address, "zero address not allowed"
+        assert new_admin != self.guardian.value, "admin must differ from guardian"
         self.pending_admin.value = new_admin
 
     @arc4.abimethod
@@ -165,12 +167,17 @@ class PSM(
         assert Txn.sender == self.pending_admin.value, "not pending admin"
         self.admin.value = self.pending_admin.value
         self.pending_admin.value = Global.zero_address
+        # Clear any queued vault-contract repoint so a change proposed by the prior admin
+        # can't be confirmed by the new one unaware of its provenance (P21-04).
+        self.pending_vault_app_id.value = UInt64(0)
+        self.pending_vault_eta.value = UInt64(0)
 
     @arc4.abimethod
     def propose_guardian(self, new_guardian: Account) -> None:
         """Start 2-step guardian rotation. Guardian only."""
         self._assert_guardian()
         assert new_guardian != Global.zero_address, "zero address not allowed"
+        assert new_guardian != self.admin.value, "guardian must differ from admin"
         self.pending_guardian.value = new_guardian
 
     @arc4.abimethod

@@ -940,3 +940,32 @@ Implemented the full **two-role guardian model** plus the deferred oracle and ac
 - ADMIN.md (trust model rewritten: roles, guardian wallet, incident playbook; deploy procedure: guardian param, timelocked vault registration, pool_address config; admin-action tables). VAULT.md / PSM.md / LP_ORACLE.md (state tables, role model, timelocked methods, anchor, `set_price_anchor`, `advance_accrual`). LIQUIDATION.md (P19-04). 
 
 **Verdict:** all Pass 19 findings now resolved or accepted-with-fix. Recommend one more independent audit pass against the refactored contracts before mainnet, since the admin-gate refactor touched every privileged method.
+
+---
+
+## Pass 21 — Independent Re-Audit of the Post–Pass-20 Two-Role Refactor (Opus)
+
+Fresh independent audit focused on the two-role refactor (every privileged method), plus a full re-sweep. The refactor's access control / pause / timelock / anchor mechanics were verified correct (no ungated privileged method; no residual `Global.creator_address` in code; fund recipients route to the current `admin`; band/rounding math verified numerically; StateTotals budgets confirmed). One real implementation bug and three cheap hardening items found — all fixed in this pass.
+
+### High — Fixed
+
+**[P21-01] 🟢 `_accrue_interest` lost-time bug: capped elapsed but clock jumped to `now`, forgiving multi-year interest and breaking `advance_accrual`**
+- When >1 year elapsed since last accrual, the function charged 1 year of interest (correct cap) but set `last_accrual_timestamp = now`, permanently discarding the interest between `last_accrual + 1yr` and `now`. A vault left dormant >1 year (the protocol explicitly permits indefinite grace) could be brought current by paying only 1 year's interest. The same understatement folded into `total_debt` at liquidation (slight under-seizure).
+- It also silently defeated the P19-13 `advance_accrual` catch-up: the first call jumped the clock to `now`, so subsequent calls accrued ~0 — the documented "call repeatedly to advance in annual increments" did not work.
+- **Fix:** advance the clock by the *capped* delta — `last_accrual_timestamp = last_accrual + seconds_elapsed` (capped). No behavior change in the normal <1yr case (`last_accrual + elapsed == now`); for multi-year dormancy the remainder is charged on the next accrual call, so no interest is forgiven and `advance_accrual` genuinely catches up. `contract.py` (vault) `_accrue_interest`.
+
+### Low — Fixed
+
+- **[P21-02] 🟢 Rotation allowed `admin == guardian`** — `propose_admin` / `propose_guardian` only rejected the zero address; proposing the other role's address would collapse the two-role model (single key gains unpause + timelock veto + recovery). Fixed: `propose_admin` asserts `new_admin != guardian`; `propose_guardian` asserts `new_guardian != admin` (all three contracts).
+- **[P21-03] 🟢 `deploy` allowed `guardian == admin` at genesis** — fixed: all three `deploy` methods assert `guardian != Txn.sender`.
+- **[P21-04] 🟢 Stale pending repoint survived admin rotation** — a timelocked change queued by a prior admin could be confirmed by a new admin unaware of its provenance. Fixed: `accept_admin` now clears the pending repoint slots (vault: `pending_lp_oracle` + eta; PSM: `pending_vault_app_id` + eta). Guardian veto + incident playbook already mitigated this; the clear is defense-in-depth.
+
+### Operational (not code) — confirmed for the deploy checklist
+
+- `oracle_bot/config.json` ships as a template with placeholders (`pool_address`, duplicate `pool_id=0`, `asset_*_id=0`, `min_price`/`max_price=0` = sanity bound disabled). These MUST be filled with real per-pool values before starting the bot — already required by the ADMIN.md Pre-Deploy checklist. Verify wBTC decimals on mainnet (AUD-006).
+
+### Verified clean (auditor re-checked, no change)
+
+PSM invariant across all mint/redeem/issue/receive/withdraw/overpay/settlement paths; tier boundaries (contiguous, no gap/overlap); all four `settle_health_liquidation` end-states reachable; `_accrue_interest` state-2 early return; group-index bounds; `collect_fees` balance clamp; `collect_algo` AVM-bounded fail-closed; oracle anchor band math + anchor-0 not dangerously reachable (whitelist check reverts first); oracle bot pool-state read matches Tinyman v2 layout.
+
+**Verdict:** after the P21 fixes, the auditor's one blocking finding (P21-01) and all hardening items are resolved; all three contracts compile clean. Remaining pre-mainnet work is operational (fill config, verify wBTC decimals, plan the genesis 48h timelock window).

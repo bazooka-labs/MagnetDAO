@@ -63,6 +63,7 @@ class LPOracle(
     def deploy(self, guardian: Account) -> None:
         """Create the oracle. Caller becomes admin; guardian is a separate cold key."""
         assert guardian != Global.zero_address, "guardian required"
+        assert guardian != Txn.sender, "guardian must differ from admin"
         self.admin.value = Txn.sender
         self.guardian.value = guardian
         self.pending_admin.value = Global.zero_address
@@ -113,6 +114,7 @@ class LPOracle(
         """Start 2-step admin rotation. Admin OR guardian (guardian path = recovery)."""
         self._assert_admin_or_guardian()
         assert new_admin != Global.zero_address, "zero address not allowed"
+        assert new_admin != self.guardian.value, "admin must differ from guardian"
         self.pending_admin.value = new_admin
 
     @arc4.abimethod
@@ -128,6 +130,7 @@ class LPOracle(
         """Start 2-step guardian rotation. Guardian only."""
         self._assert_guardian()
         assert new_guardian != Global.zero_address, "zero address not allowed"
+        assert new_guardian != self.admin.value, "guardian must differ from admin"
         self.pending_guardian.value = new_guardian
 
     @arc4.abimethod
