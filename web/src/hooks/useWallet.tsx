@@ -57,6 +57,7 @@ export function useWallet() {
     wallets,
     isReady,
     signTransactions,
+    transactionSigner,
     algodClient,
   } = useUseWallet();
 
@@ -71,6 +72,7 @@ export function useWallet() {
     activeAccount,
     wallets,
     signTransactions,
+    transactionSigner,
     algodClient,
     connect: async (walletId?: WalletId) => {
       const wallet = walletId

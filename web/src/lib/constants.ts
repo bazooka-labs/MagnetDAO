@@ -42,3 +42,19 @@ export const VOTE_DURATION_SECONDS = 604_800; // 7 days
 
 // Network the voting contract is deployed on. Flip to "mainnet" when live.
 export const VOTING_NETWORK: "mainnet" | "testnet" = "mainnet";
+
+// ── MagnetFi lending ──────────────────────────────────────────────────────────
+
+export const LENDING_NETWORK: "mainnet" | "testnet" = "testnet";
+
+// Testnet ASA IDs
+export const U_ASA_ID    = 757131983;
+export const USDC_ASA_ID = 10458941;
+
+// Set after running the deploy wizard — left as 0 until deployed
+export const ORACLE_APP_ID   = 0;
+export const USDC_POOL_APP_ID = 0;
+export const U_POOL_APP_ID    = 0;
+
+// Admin wallet — gates the /magnetfi admin panel
+export const LENDING_ADMIN_ADDRESS = "";
