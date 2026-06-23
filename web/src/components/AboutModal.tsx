@@ -55,13 +55,12 @@ export function AboutModal() {
               </p>
 
               <div>
-                <h3 className="text-white font-semibold mb-2">The Strategy</h3>
+                <h3 className="text-white font-semibold mb-2">The Magnet Token ($U)</h3>
                 <p>
-                  Magnet Strategies pursues sustainable yield through a diversified set of Algorand
-                  DeFi activities. Core approaches include strategic liquidity pool pairings that
-                  generate ongoing swap fees, liquid staking and node participation rewards, and
-                  stablecoin lending positions. Each strategy is selected and actively managed based
-                  on years of hands-on experience in Algorand DeFi since its earliest days.
+                  Launched in June 2025, $U has a fixed supply of 750,000 tokens on Algorand (ASA
+                  ID: 3081853135). It serves as both the governance token for MagnetDAO and the
+                  primary asset across every Magnet Strategies product. Its value is directly tied to
+                  the performance of the underlying DeFi strategies it powers.
                 </p>
               </div>
 
@@ -74,21 +73,55 @@ export function AboutModal() {
                   vote). Approved projects are paired with $U in live DEX pools, where generated
                   swap fees flow back into the treasury to compound in future cycles.
                 </p>
-                <p className="mt-3">
-                  For holders, owning $U delivers passive exposure to a rotating selection of
-                  Algorand projects through these liquidity pairings — without the need to manage
-                  individual DeFi positions manually. It functions as a diversified, actively
-                  managed window into the ecosystem.
+              </div>
+
+              <div>
+                <h3 className="text-white font-semibold mb-2">MagnetFi</h3>
+                <p>
+                  MagnetFi is the lending and borrowing arm of Magnet Strategies. It operates across
+                  two distinct layers:
+                </p>
+                <ul className="mt-3 space-y-2 pl-4">
+                  <li className="flex gap-2">
+                    <span className="text-magnet-400 shrink-0">·</span>
+                    <span>
+                      <span className="text-white font-medium">Single-Token Markets</span> — live
+                      $U and USDC lending pools hosted on the CompX protocol. Deposit assets to earn
+                      yield or borrow against approved collateral, with rates set dynamically by
+                      on-chain utilization.
+                    </span>
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="text-magnet-400 shrink-0">·</span>
+                    <span>
+                      <span className="text-white font-medium">LP Collateral Vaults (v2)</span> — a
+                      novel MagnetFi-native protocol that lets users borrow the{" "}
+                      <span className="text-white font-medium">mUSD</span> stablecoin against
+                      Tinyman LP tokens. Your liquidity position keeps earning trading fees while
+                      it works as collateral — unlocking capital without unwinding your LP.
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 className="text-white font-semibold mb-2">Magnet Farms</h3>
+                <p>
+                  Magnet Farms connects $U holders to active liquidity incentive programs on
+                  Algorand DEXes. By providing liquidity to approved pools, farmers earn trading
+                  fees and any additional rewards on top — compounding returns alongside their
+                  $U exposure.
                 </p>
               </div>
 
               <div>
-                <h3 className="text-white font-semibold mb-2">The Magnet Token ($U)</h3>
+                <h3 className="text-white font-semibold mb-2">The Strategy</h3>
                 <p>
-                  Launched in June 2025, $U has a fixed supply of 750,000 tokens on Algorand (ASA
-                  ID: 3081853135). It serves as both the governance token for MagnetDAO and the
-                  primary asset in every treasury liquidity pool. This dual role directly links its
-                  value to the performance of the underlying strategies.
+                  Every product within Magnet Strategies is designed to work together. $U sits at
+                  the center — governing DAO liquidity decisions, collateralizing MagnetFi loans,
+                  anchoring farm pairs, and accruing value from fees generated across each layer.
+                  The goal is a self-reinforcing ecosystem where each product strengthens the
+                  others over time.
                 </p>
               </div>
 
