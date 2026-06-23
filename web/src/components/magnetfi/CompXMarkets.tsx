@@ -6,21 +6,23 @@ import { TrendingUp, Wallet, CircleDollarSign, Coins } from "lucide-react";
 import { Panel } from "./v2/shared";
 
 const COMPX_MAGNET_APP_ID = 3607827540;
-const COMPX_USDC_APP_ID = 3491050310;
+const COMPX_USDC_APP_ID   = 3491050310;
+const MAGNET_ASA_ID       = 3081853135;
 
 const POOL_META: Record<number, { name: string; ticker: string; icon: React.ReactNode; decimals: number }> = {
   [COMPX_MAGNET_APP_ID]: { name: "Magnet", ticker: "$U", icon: <Coins className="h-5 w-5 text-white" />, decimals: 5 },
-  [COMPX_USDC_APP_ID]: { name: "USD Coin", ticker: "USDC", icon: <CircleDollarSign className="h-5 w-5 text-white" />, decimals: 6 },
+  [COMPX_USDC_APP_ID]:   { name: "USD Coin", ticker: "USDC", icon: <CircleDollarSign className="h-5 w-5 text-white" />, decimals: 6 },
 };
 
 interface PoolData {
   appId: number;
-  totalDeposits: number;
+  totalDeposits: number;   // in token display units
   totalBorrows: number;
   availableToBorrow: number;
   utilizationRate: number;
   supplyApy: number;
   borrowApy: number;
+  usdPrice: number;        // price of 1 token in USD
 }
 
 function readState(globalState: algosdk.modelsv2.TealKeyValue[]): Record<string, bigint | Uint8Array> {
@@ -45,52 +47,70 @@ function toStandard(raw: bigint, decimals: number): number {
   return Number(raw) / Math.pow(10, decimals);
 }
 
-async function fetchPool(algod: algosdk.Algodv2, appId: number): Promise<PoolData> {
+async function fetchUsdPrice(): Promise<number> {
+  try {
+    const [vestigeRes, algoRes] = await Promise.all([
+      fetch(`https://api.vestigelabs.org/assets/price?asset_ids=${MAGNET_ASA_ID}&network_id=0`),
+      fetch("https://api.coingecko.com/api/v3/simple/price?ids=algorand&vs_currencies=usd"),
+    ]);
+    if (!vestigeRes.ok || !algoRes.ok) return 0;
+    const vestigeData = await vestigeRes.json();
+    const algoData    = await algoRes.json();
+    const algoPrice   = vestigeData?.[0]?.price ?? 0;
+    const algoUsd     = algoData?.algorand?.usd ?? 0;
+    return Number(algoPrice) * Number(algoUsd);
+  } catch {
+    return 0;
+  }
+}
+
+async function fetchPool(algod: algosdk.Algodv2, appId: number, usdPrice: number): Promise<PoolData> {
   const app = await algod.getApplicationByID(appId).do();
   const raw = readState(app.params.globalState ?? []);
-  const meta = POOL_META[appId];
-  const dec = meta.decimals;
+  const dec = POOL_META[appId].decimals;
 
   const totalDepositsRaw = uint(raw, "total_deposits");
-  const totalBorrowsRaw = uint(raw, "total_borrows");
-  const cashRaw = uint(raw, "cash_on_hand");
+  const totalBorrowsRaw  = uint(raw, "total_borrows");
+  const cashRaw          = uint(raw, "cash_on_hand");
 
-  const totalDeposits = toStandard(totalDepositsRaw, dec);
-  const totalBorrows = toStandard(totalBorrowsRaw, dec);
+  const totalDeposits    = toStandard(totalDepositsRaw, dec);
+  const totalBorrows     = toStandard(totalBorrowsRaw, dec);
   const availableToBorrow = toStandard(cashRaw, dec);
 
   const utilizationRate =
-    totalDepositsRaw > BigInt(0) ? (Number(totalBorrowsRaw) / Number(totalDepositsRaw)) * 100 : 0;
+    totalDepositsRaw > BigInt(0)
+      ? (Number(totalBorrowsRaw) / Number(totalDepositsRaw)) * 100
+      : 0;
 
-  // last_apr_bps is the contract's most-recently computed borrow APR
-  const borrowAprBps = Number(uint(raw, "last_apr_bps"));
-  const borrowApy = borrowAprBps / 100;
-
-  // Supply APY = borrow APY × utilization × (1 − protocol share)
+  const borrowAprBps     = Number(uint(raw, "last_apr_bps"));
+  const borrowApy        = borrowAprBps / 100;
   const protocolShareBps = Number(uint(raw, "protocol_share_bps") || BigInt(1000));
-  const supplyApy = borrowApy * (utilizationRate / 100) * (1 - protocolShareBps / 10_000);
+  const supplyApy        = borrowApy * (utilizationRate / 100) * (1 - protocolShareBps / 10_000);
 
-  return { appId, totalDeposits, totalBorrows, availableToBorrow, utilizationRate, supplyApy, borrowApy };
+  return { appId, totalDeposits, totalBorrows, availableToBorrow, utilizationRate, supplyApy, borrowApy, usdPrice };
 }
 
-function fmt(n: number, dp = 2): string {
-  return isFinite(n) ? n.toFixed(dp) : "—";
+function fmtApy(n: number): string {
+  return isFinite(n) ? `${n.toFixed(2)}%` : "—";
 }
 
-function fmtAmount(n: number, ticker: string): string {
+function fmtUsd(n: number): string {
   if (!isFinite(n)) return "—";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M ${ticker}`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K ${ticker}`;
-  return `${n.toFixed(2)} ${ticker}`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(2)}K`;
+  return `$${n.toFixed(2)}`;
 }
 
 function PoolCard({ appId, data, loading }: { appId: number; data: PoolData | null; loading: boolean }) {
   const meta = POOL_META[appId];
   const skeleton = (w: string) => (
-    <span className={`inline-block h-5 ${w} animate-pulse rounded bg-white/10`} />
+    <span className={`inline-block h-4 ${w} animate-pulse rounded bg-white/10`} />
   );
-  const utilPct = data?.utilizationRate ?? 0;
+  const utilPct   = data?.utilizationRate ?? 0;
   const utilColor = utilPct > 80 ? "bg-red-500" : utilPct > 60 ? "bg-yellow-500" : "bg-magnet-500";
+
+  const toUsd = (tokens: number) =>
+    data ? fmtUsd(tokens * data.usdPrice) : "—";
 
   return (
     <Panel className="p-6 flex flex-col gap-5">
@@ -116,35 +136,35 @@ function PoolCard({ appId, data, loading }: { appId: number; data: PoolData | nu
         <div className="rounded-xl border border-white/5 bg-white/5 px-4 py-3">
           <p className="text-[11px] uppercase tracking-wider text-gray-500">Supply APY</p>
           <p className="mt-1 font-mono text-2xl font-bold text-green-400">
-            {loading || !data ? skeleton("w-16") : `${fmt(data.supplyApy)}%`}
+            {loading || !data ? skeleton("w-16") : fmtApy(data.supplyApy)}
           </p>
         </div>
         <div className="rounded-xl border border-white/5 bg-white/5 px-4 py-3">
           <p className="text-[11px] uppercase tracking-wider text-gray-500">Borrow APY</p>
           <p className="mt-1 font-mono text-2xl font-bold text-magnet-300">
-            {loading || !data ? skeleton("w-16") : `${fmt(data.borrowApy)}%`}
+            {loading || !data ? skeleton("w-16") : fmtApy(data.borrowApy)}
           </p>
         </div>
       </div>
 
-      {/* Stats row */}
+      {/* Stats row — all in USD */}
       <div className="grid grid-cols-3 gap-2 border-t border-white/5 pt-4 text-center">
         <div>
-          <p className="text-[11px] uppercase tracking-wider text-gray-500">Total Supply</p>
+          <p className="text-[11px] uppercase tracking-wider text-gray-500">TVL</p>
           <p className="mt-1 font-mono text-sm font-semibold text-white">
-            {loading || !data ? skeleton("w-16") : fmtAmount(data.totalDeposits, meta.ticker)}
+            {loading || !data ? skeleton("w-14") : toUsd(data.totalDeposits)}
           </p>
         </div>
         <div>
-          <p className="text-[11px] uppercase tracking-wider text-gray-500">Total Borrow</p>
+          <p className="text-[11px] uppercase tracking-wider text-gray-500">Borrowed</p>
           <p className="mt-1 font-mono text-sm font-semibold text-white">
-            {loading || !data ? skeleton("w-16") : fmtAmount(data.totalBorrows, meta.ticker)}
+            {loading || !data ? skeleton("w-14") : toUsd(data.totalBorrows)}
           </p>
         </div>
         <div>
           <p className="text-[11px] uppercase tracking-wider text-gray-500">Available</p>
           <p className="mt-1 font-mono text-sm font-semibold text-white">
-            {loading || !data ? skeleton("w-16") : fmtAmount(data.availableToBorrow, meta.ticker)}
+            {loading || !data ? skeleton("w-14") : toUsd(data.availableToBorrow)}
           </p>
         </div>
       </div>
@@ -154,7 +174,7 @@ function PoolCard({ appId, data, loading }: { appId: number; data: PoolData | nu
         <div className="mb-1.5 flex items-center justify-between">
           <p className="text-[11px] uppercase tracking-wider text-gray-500">Utilization</p>
           <p className="font-mono text-xs text-gray-400">
-            {loading || !data ? "—" : `${fmt(data.utilizationRate)}%`}
+            {loading || !data ? "—" : `${data.utilizationRate.toFixed(2)}%`}
           </p>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
@@ -167,23 +187,26 @@ function PoolCard({ appId, data, loading }: { appId: number; data: PoolData | nu
         </div>
       </div>
 
-      {/* Hosted by attribution */}
       <p className="text-center text-xs text-gray-600 mt-auto">Hosted by CompX</p>
     </Panel>
   );
 }
 
 export function CompXMarkets() {
-  const [pools, setPools] = useState<Record<number, PoolData>>({});
+  const [pools, setPools]   = useState<Record<number, PoolData>>({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError]   = useState(false);
 
   useEffect(() => {
     const algod = new algosdk.Algodv2("", "https://mainnet-api.algonode.cloud", "");
-    Promise.all([
-      fetchPool(algod, COMPX_MAGNET_APP_ID),
-      fetchPool(algod, COMPX_USDC_APP_ID),
-    ])
+
+    fetchUsdPrice()
+      .then((magnetUsdPrice) =>
+        Promise.all([
+          fetchPool(algod, COMPX_MAGNET_APP_ID, magnetUsdPrice),
+          fetchPool(algod, COMPX_USDC_APP_ID, 1), // USDC = $1
+        ])
+      )
       .then(([magnet, usdc]) => setPools({ [magnet.appId]: magnet, [usdc.appId]: usdc }))
       .catch(() => setError(true))
       .finally(() => setLoading(false));
@@ -210,7 +233,7 @@ export function CompXMarkets() {
       ) : (
         <div className="grid gap-5 md:grid-cols-2">
           <PoolCard appId={COMPX_MAGNET_APP_ID} data={pools[COMPX_MAGNET_APP_ID] ?? null} loading={loading} />
-          <PoolCard appId={COMPX_USDC_APP_ID} data={pools[COMPX_USDC_APP_ID] ?? null} loading={loading} />
+          <PoolCard appId={COMPX_USDC_APP_ID}   data={pools[COMPX_USDC_APP_ID]   ?? null} loading={loading} />
         </div>
       )}
 
