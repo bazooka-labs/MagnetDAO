@@ -1,10 +1,11 @@
 "use client";
 
-import { ShieldCheck, Lock, Rocket, SlidersHorizontal } from "lucide-react";
+import { ShieldCheck, Lock, SlidersHorizontal } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { MAGNETFI_ADMIN_ADDRESS } from "@/lib/magnetfi";
 import { Panel } from "./shared";
 import { CreateMusd } from "./admin/CreateMusd";
+import { DeployWizard } from "./admin/DeployWizard";
 
 function NotAuthorized() {
   return (
@@ -71,17 +72,20 @@ export function AdminTab() {
         <CreateMusd />
       </section>
 
+      {/* Deploy & initialize */}
+      <section>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
+          Deploy &amp; initialize
+        </h3>
+        <DeployWizard />
+      </section>
+
       {/* Coming next */}
       <section>
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
-          Deploy &amp; operate
+          Operations
         </h3>
         <div className="grid gap-5 md:grid-cols-2">
-          <FutureTool
-            icon={<Rocket className="h-5 w-5" />}
-            title="Deploy & initialize"
-            body="Deploy the LP Oracle, PSM, and Vault with the guardian, wire them together, set risk params, and open the vault ceiling — all as signed steps."
-          />
           <FutureTool
             icon={<SlidersHorizontal className="h-5 w-5" />}
             title="Operations"

@@ -7,11 +7,16 @@ import { PROTOCOL_LIVE, MAGNETFI_ADMIN_ADDRESS } from "@/lib/magnetfi";
 import { OverviewTab } from "@/components/magnetfi/v2/OverviewTab";
 import { VaultsTab } from "@/components/magnetfi/v2/VaultsTab";
 import { MusdTab } from "@/components/magnetfi/v2/MusdTab";
-import { AdminTab } from "@/components/magnetfi/v2/AdminTab";
 import dynamic from "next/dynamic";
 
 const CompXMarkets = dynamic(
   () => import("@/components/magnetfi/CompXMarkets").then((m) => m.CompXMarkets),
+  { ssr: false, loading: () => <div className="h-64 rounded-2xl border border-white/10 bg-black/40 animate-pulse" /> }
+);
+
+// Admin panel pulls in algokit-utils — lazy-load so it only ships when an admin opens it.
+const AdminTab = dynamic(
+  () => import("@/components/magnetfi/v2/AdminTab").then((m) => m.AdminTab),
   { ssr: false, loading: () => <div className="h-64 rounded-2xl border border-white/10 bg-black/40 animate-pulse" /> }
 );
 
