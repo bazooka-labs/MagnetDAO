@@ -1,12 +1,13 @@
 "use client";
 
-import { ShieldCheck, Lock, SlidersHorizontal, Globe } from "lucide-react";
+import { ShieldCheck, Lock, Globe } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { MAGNETFI_ADMIN_ADDRESS } from "@/lib/magnetfi";
 import { Panel } from "./shared";
 import { CreateMusd } from "./admin/CreateMusd";
 import { CreateTestAssets } from "./admin/CreateTestAssets";
 import { DeployWizard } from "./admin/DeployWizard";
+import { OperationsPanel } from "./admin/OperationsPanel";
 
 function NotAuthorized() {
   return (
@@ -79,21 +80,12 @@ export function AdminTab() {
         <DeployWizard />
       </section>
 
-      {/* Operations (next) */}
+      {/* Operations */}
       <section>
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
           Operations
         </h3>
-        <Panel className="p-6 opacity-70">
-          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-gray-400">
-            <SlidersHorizontal className="h-5 w-5" />
-          </div>
-          <p className="text-sm font-semibold text-white">Operations</p>
-          <p className="mt-1.5 text-sm leading-relaxed text-gray-500">
-            Rates, liquidations, pause / unpause, oracle re-anchoring, and fee collection — coming
-            once the contracts are live.
-          </p>
-        </Panel>
+        <OperationsPanel />
       </section>
     </div>
   );
