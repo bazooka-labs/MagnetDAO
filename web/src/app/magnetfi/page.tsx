@@ -5,13 +5,23 @@ import { Landmark, Vault, Coins, LayoutGrid, TrendingUp, Shield } from "lucide-r
 import { useWallet } from "@/hooks/useWallet";
 import { PROTOCOL_LIVE, MAGNETFI_ADMIN_ADDRESS } from "@/lib/magnetfi";
 import { OverviewTab } from "@/components/magnetfi/v2/OverviewTab";
-import { VaultsTab } from "@/components/magnetfi/v2/VaultsTab";
-import { MusdTab } from "@/components/magnetfi/v2/MusdTab";
 import dynamic from "next/dynamic";
+
+const pulse = () => <div className="h-64 rounded-2xl border border-white/10 bg-black/40 animate-pulse" />;
 
 const CompXMarkets = dynamic(
   () => import("@/components/magnetfi/CompXMarkets").then((m) => m.CompXMarkets),
-  { ssr: false, loading: () => <div className="h-64 rounded-2xl border border-white/10 bg-black/40 animate-pulse" /> }
+  { ssr: false, loading: pulse }
+);
+
+// Borrower write-tabs pull in algokit-utils — lazy-load so the default view stays light.
+const VaultsTab = dynamic(
+  () => import("@/components/magnetfi/v2/VaultsTab").then((m) => m.VaultsTab),
+  { ssr: false, loading: pulse }
+);
+const MusdTab = dynamic(
+  () => import("@/components/magnetfi/v2/MusdTab").then((m) => m.MusdTab),
+  { ssr: false, loading: pulse }
 );
 
 // Admin panel pulls in algokit-utils — lazy-load so it only ships when an admin opens it.

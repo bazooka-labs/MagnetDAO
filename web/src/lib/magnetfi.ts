@@ -32,8 +32,29 @@ export const MUSD_ASA_ID: number = 3615600399;
 export const MAGNETFI_ADMIN_ADDRESS =
   "KNML6OW2XVXYSSGQX7EBLBMSLAPY6QFNBZUJMNEFIEXIIVJLMW4VINYU6A";
 
-// True once the core vault contract is deployed.
-export const PROTOCOL_LIVE = MAGNETFI_APPS.vault !== 0;
+// Active deployment, resolved by network (NEXT_PUBLIC_ALGO_NETWORK). Borrower-facing
+// tabs read from ACTIVE so they light up on testnet without code changes; admin tools
+// keep their own mainnet defaults + manual overrides.
+const _NET: "mainnet" | "testnet" =
+  process.env.NEXT_PUBLIC_ALGO_NETWORK === "testnet" ? "testnet" : "mainnet";
+
+export type Deployment = {
+  oracle: number; psm: number; vault: number;
+  musd: number; usdc: number; lpAsaId: number; poolId: number;
+};
+
+const DEPLOYMENTS: Record<"mainnet" | "testnet", Deployment> = {
+  mainnet: { oracle: 0, psm: 0, vault: 0, musd: 3615600399, usdc: 31566704, lpAsaId: 0, poolId: 0 },
+  testnet: {
+    oracle: 765096480, psm: 765096481, vault: 765096491,
+    musd: 765095889, usdc: 765095890, lpAsaId: 765095900, poolId: 765095900,
+  },
+};
+
+export const ACTIVE: Deployment = DEPLOYMENTS[_NET];
+
+// True once the core vault contract is deployed for the active network.
+export const PROTOCOL_LIVE = ACTIVE.vault !== 0;
 
 // PSM redemption fee (mUSD → USDC). Mint (USDC → mUSD) is always 0%.
 export const PSM_REDEEM_FEE_BPS = 100; // 1%
