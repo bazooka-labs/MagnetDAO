@@ -8,6 +8,7 @@ Magnet Strategies is an Algorand-native DeFi organization founded in June 2025 w
 
 - **Landing page:** https://magnetstrategies.io
 - **DAO app:** https://magnetstrategies.io/dao
+- **MagnetFi app:** https://magnetstrategies.io/magnetfi
 
 ## Products
 
@@ -16,10 +17,10 @@ Liquidity governance arm of Magnet Strategies. $U holders vote quarterly on whic
 
 → [`magnetdao/`](./magnetdao/OVERVIEW.md)
 
-### Magnet Lending *(in development)*
-Overcollateralized lending and borrowing protocol for USDC and $U. Deposit assets to earn yield; borrow against collateral without selling your position.
+### MagnetFi
+Lending and borrowing arm of Magnet Strategies. Single-token lending/borrowing via **CompX** markets is live; the **LP-collateral vault + mUSD stablecoin** protocol (v2) is built, internally audited (24 review passes + executable integration/adversarial tests), and **testnet-deployed** — mainnet launch incoming. The **mUSD** ASA is live on mainnet (`3615600399`). (v1 standard overcollateralized lending is code-complete and superseded by v2.)
 
-→ [`lending/`](./lending/OVERVIEW.md)
+→ [`magnetfi/`](./magnetfi/OVERVIEW.md)
 
 ## Token
 
@@ -39,10 +40,12 @@ Overcollateralized lending and borrowing protocol for USDC and $U. Deposit asset
 MagnetStrategies/
 ├── README.md
 ├── magnetdao/          ← MagnetDAO governance docs
-├── lending/            ← Lending protocol architecture docs
+├── magnetfi/           ← MagnetFi lending protocol
+│   ├── v1/             ← Standard lending (code complete, superseded by v2)
+│   └── v2/             ← LP vault + mUSD — docs, contracts, oracle bot, tests
+│                          (built, audited, testnet-deployed)
 ├── contracts/
-│   ├── magnetdao/      ← Voting contract (live on mainnet)
-│   └── lending/        ← Lending contracts (in development)
+│   └── magnetdao/      ← Voting contract (live on mainnet)
 └── web/                ← Next.js frontend (magnetstrategies.io)
 ```
 

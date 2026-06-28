@@ -1,0 +1,6 @@
+{
+  "name": "magnet-strategies",
+  "dependencies": {
+    "@compx/sdk": "^2.0.1"
+  }
+}
