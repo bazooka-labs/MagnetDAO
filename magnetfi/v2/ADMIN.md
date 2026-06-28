@@ -218,7 +218,7 @@ Order matters — do not skip steps or reorder.
 
 ### Pre-Deploy
 - [ ] Create mUSD ASA (admin wallet in Pera): name "Magnet USD", unit "mUSD", 6 decimals, 500M supply, freeze=zero, clawback=zero
-- [ ] Note mUSD ASA ID; update `MUSD_ASA_ID` in `web/src/lib/constants.ts`
+- [ ] Note mUSD ASA ID; set `musd` in `DEPLOYMENTS.mainnet` in `web/src/lib/magnetfi.ts` (mUSD already live: `3615600399`)
 - [ ] Create oracle bot wallet (separate hot key); fund with ALGO for transaction fees (~5 ALGO)
 - [ ] **Create the guardian wallet** — a cold multisig (recommend 2-of-3 hardware), separate from the admin and bot keys. Record its address; it is passed to all three `deploy()` calls.
 - [ ] **Verify wBTC ASA decimal count on Algorand mainnet** — actual decimals must match the value hardcoded in the oracle bot decimal config table (AUD-006)
@@ -231,7 +231,7 @@ Order matters — do not skip steps or reorder.
 - [ ] Deploy PSM: `deploy(musd_asa_id, usdc_asa_id, guardian)`; record App ID
 - [ ] Deploy Vault: `deploy(psm_app_id, lp_oracle_app_id, musd_asa_id, usdc_asa_id, guardian)`; record App ID
 - [ ] The deployer becomes `admin` on each; the passed address becomes `guardian`. Verify both on each contract.
-- [ ] Update `LP_ORACLE_V2_APP_ID`, `PSM_APP_ID`, `VAULT_APP_ID` in constants.ts
+- [ ] Set the oracle / PSM / vault app IDs (plus LP + pool IDs) in `DEPLOYMENTS.mainnet` in `web/src/lib/magnetfi.ts`
 
 ### Initialize LP Oracle
 - [ ] Call `set_authorized_updater(bot_wallet_address)`

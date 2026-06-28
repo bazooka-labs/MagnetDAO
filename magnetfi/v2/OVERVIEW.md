@@ -195,13 +195,12 @@ MagnetFi v2 has five revenue streams across two categories — automatic and adm
 
 | Component | Status |
 |---|---|
-| Architecture design | In progress |
-| mUSD ASA | Not created |
-| PSM contract | Not built |
-| Vault contract | Not built |
-| LP Oracle contract | Not built |
-| Admin UI | Not built |
-| Testnet deployment | Not started |
+| Architecture design | ✅ Complete (24 audit passes) |
+| Contracts (LP Oracle / PSM / Vault) | ✅ Built — 67 integration/adversarial tests + 30 oracle-bot tests pass |
+| mUSD ASA | ✅ Live on mainnet — ASA `3615600399` |
+| Admin UI + borrower app | ✅ Built — `/magnetfi` (deploy wizard, ops console, live borrower tabs) |
+| Testnet deployment | ✅ Complete — full deploy rehearsal (Oracle `765096480` / PSM `765096481` / Vault `765096491`) |
+| Mainnet deployment | ⬜ Pending — guardian address + U/tALGO pool/LP IDs + oracle bot run |
 
 ---
 
